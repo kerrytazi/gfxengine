@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gfxengine/math.hpp"
+#include "gfxengine/image.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -9,12 +10,15 @@
 #include <utility>
 #include <limits>
 #include <functional>
+#include <memory>
+#include <variant>
 
 
 struct Vertex
 {
 	glm::vec3 pos;
 	Color color;
+	glm::vec2 tex;
 };
 
 struct Frame;
@@ -47,131 +51,54 @@ struct MatrixGuard
 	~MatrixGuard();
 };
 
-struct DrawTask
+struct DrawTaskTypes
 {
-	enum class Type
+	struct DrawIndices
 	{
-		DrawIndices,
-		UpdateMVP,
-		ClearBackground,
-		SettingWireFrame,
-		SettingCulling,
-		SettingBlend,
-		SettingDepth,
+		size_t from;
+		size_t count;
+		std::weak_ptr<Image> texture;
 	};
 
-	union Content
+	struct UpdateMVP
 	{
-		struct DrawIndices
-		{
-			size_t from;
-			size_t count;
-		} draw_indices;
-
-		struct UpdateMVP
-		{
-			glm::mat4 mvp;
-		} update_mvp;
-
-		struct ClearBackground
-		{
-			Color color;
-		} clear_background;
-
-		struct SettingWireFrame
-		{
-			bool enable;
-		} setting_wireframe;
-
-		struct SettingCulling
-		{
-			bool enable;
-		} setting_culling;
-
-		struct SettingBlend
-		{
-			bool enable;
-		} setting_blend;
-
-		struct SettingDepth
-		{
-			bool enable;
-		} setting_depth;
+		glm::mat4 mvp;
 	};
 
-	Type type;
-	Content content;
-
-	DrawTask(Content::DrawIndices draw_indices)
+	struct ClearBackground
 	{
-		type = Type::DrawIndices;
-		new (&content.draw_indices) Content::DrawIndices{ draw_indices };
-	}
+		Color color;
+	};
 
-	DrawTask(Content::UpdateMVP update_mvp)
+	struct SettingWireFrame
 	{
-		type = Type::UpdateMVP;
-		new (&content.update_mvp) Content::UpdateMVP{ update_mvp };
-	}
+		bool enable;
+	};
 
-	DrawTask(Content::ClearBackground clear_background)
+	struct SettingCulling
 	{
-		type = Type::ClearBackground;
-		new (&content.clear_background) Content::ClearBackground{ clear_background };
-	}
+		bool enable;
+	};
 
-	DrawTask(Content::SettingWireFrame setting_wireframe)
+	struct SettingBlend
 	{
-		type = Type::SettingWireFrame;
-		new (&content.setting_wireframe) Content::SettingWireFrame{ setting_wireframe };
-	}
+		bool enable;
+	};
 
-	DrawTask(Content::SettingCulling setting_culling)
+	struct SettingDepth
 	{
-		type = Type::SettingCulling;
-		new (&content.setting_culling) Content::SettingCulling{ setting_culling };
-	}
-
-	DrawTask(Content::SettingBlend setting_blend)
-	{
-		type = Type::SettingBlend;
-		new (&content.setting_blend) Content::SettingBlend{ setting_blend };
-	}
-
-	DrawTask(Content::SettingDepth setting_depth)
-	{
-		type = Type::SettingDepth;
-		new (&content.setting_depth) Content::SettingDepth{ setting_depth };
-	}
-
-	~DrawTask()
-	{
-		switch (type)
-		{
-			case Type::DrawIndices:
-				content.draw_indices.~DrawIndices();
-				break;
-			case Type::UpdateMVP:
-				content.update_mvp.~UpdateMVP();
-				break;
-			case Type::ClearBackground:
-				content.clear_background.~ClearBackground();
-				break;
-			case Type::SettingWireFrame:
-				content.setting_wireframe.~SettingWireFrame();
-				break;
-			case Type::SettingCulling:
-				content.setting_culling.~SettingCulling();
-				break;
-			case Type::SettingBlend:
-				content.setting_blend.~SettingBlend();
-				break;
-			case Type::SettingDepth:
-				content.setting_depth.~SettingDepth();
-				break;
-		}
-	}
+		bool enable;
+	};
 };
+
+using DrawTask = std::variant<
+	DrawTaskTypes::DrawIndices,
+	DrawTaskTypes::UpdateMVP,
+	DrawTaskTypes::ClearBackground,
+	DrawTaskTypes::SettingWireFrame,
+	DrawTaskTypes::SettingCulling,
+	DrawTaskTypes::SettingBlend,
+	DrawTaskTypes::SettingDepth>;
 
 struct FrameCache
 {
@@ -192,13 +119,19 @@ struct FrameCache
 	{
 		return vertices.empty();
 	}
+
+	void clear()
+	{
+		vertices.clear();
+		indices.clear();
+	}
 };
 
 class Frame
 {
 public:
 
-	FrameCache data = FrameCache::with_reserve(64 * 1024);
+	FrameCache data = FrameCache::with_reserve(1024 * 1024);
 
 	std::vector<DrawTask> tasks;
 	std::vector<FrameCache *> caches;
@@ -213,49 +146,51 @@ public:
 
 public:
 
-	void add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices);
+	void add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices, std::weak_ptr<Image> _img = {});
 
-	void add_triangle(Vertex const &v0, Vertex const &v1, Vertex const &v2)
+	void add_triangle(Vertex const &v0, Vertex const &v1, Vertex const &v2, std::weak_ptr<Image> img = {})
 	{
 		add_vertices(
 			std::initializer_list<Vertex>{ v0, v1, v2 },
-			std::initializer_list<uint32_t>{ 0, 1, 2 }
+			std::initializer_list<uint32_t>{ 0, 1, 2 },
+			img
 		);
 	}
 
-	void add_triangle(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, Color color = Color::WHITE)
+	void add_triangle(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, Color color = Color::WHITE, std::weak_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {})
 	{
-		add_triangle(Vertex{ glm::vec3(pos0, 0.0f), color }, { glm::vec3(pos1, 0.0f), color }, { glm::vec3(pos2, 0.0f), color });
+		add_triangle(Vertex{ glm::vec3(pos0, 0.0f), color, tex0 }, { glm::vec3(pos1, 0.0f), color, tex1 }, { glm::vec3(pos2, 0.0f), color, tex2 });
 	}
 
-	void add_quad(Vertex const &v0, Vertex const &v1, Vertex const &v2, Vertex const &v3)
+	void add_quad(Vertex const &v0, Vertex const &v1, Vertex const &v2, Vertex const &v3, std::weak_ptr<Image> img = {})
 	{
 		add_vertices(
 			std::initializer_list<Vertex>{ v0, v1, v2, v3 },
-			std::initializer_list<uint32_t>{ 0, 1, 2, 0, 2, 3, }
+			std::initializer_list<uint32_t>{ 0, 1, 2, 0, 2, 3, },
+			img
 		);
 	}
 
-	void add_quad(glm::vec3 const &pos0, glm::vec3 const &pos1, glm::vec3 const &pos2, glm::vec3 const &pos3, Color color = Color::WHITE)
+	void add_quad(glm::vec3 const &pos0, glm::vec3 const &pos1, glm::vec3 const &pos2, glm::vec3 const &pos3, Color color = Color::WHITE, std::weak_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {}, glm::vec2 const &tex3 = {})
 	{
-		add_quad(Vertex{ pos0, color }, { pos1, color }, { pos2, color }, { pos3, color });
+		add_quad(Vertex{ pos0, color, tex0 }, { pos1, color, tex1 }, { pos2, color, tex2 }, { pos3, color, tex3 }, img);
 	}
 
-	void add_quad(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, glm::vec2 const &pos3, Color color = Color::WHITE)
+	void add_quad(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, glm::vec2 const &pos3, Color color = Color::WHITE, std::weak_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {}, glm::vec2 const &tex3 = {})
 	{
-		add_quad(Vertex{ glm::vec3(pos0, 0.0f), color }, { glm::vec3(pos1, 0.0f), color }, { glm::vec3(pos2, 0.0f), color }, { glm::vec3(pos3, 0.0f), color });
+		add_quad(Vertex{ glm::vec3(pos0, 0.0f), color, tex0 }, { glm::vec3(pos1, 0.0f), color, tex1 }, { glm::vec3(pos2, 0.0f), color, tex2 }, { glm::vec3(pos3, 0.0f), color, tex3 }, img);
 	}
 
 	void clear_background(Color const &color)
 	{
 		// TODO: batch
-		tasks.push_back(DrawTask(DrawTask::Content::ClearBackground{ .color = color }));
+		tasks.push_back(DrawTask(DrawTaskTypes::ClearBackground{ .color = color }));
 	}
 
 	void on_mvp_update()
 	{
 		// TODO: batch
-		tasks.push_back(DrawTask(DrawTask::Content::UpdateMVP{ .mvp = projection * view * model }));
+		tasks.push_back(DrawTask(DrawTaskTypes::UpdateMVP{ .mvp = projection * view * model }));
 	}
 
 	MatrixGuard set_model_matrix(glm::mat4 const &_model)
@@ -296,22 +231,22 @@ public:
 
 	void setting_wireframe(bool enable)
 	{
-		tasks.push_back(DrawTask(DrawTask::Content::SettingWireFrame{ .enable = enable }));
+		tasks.push_back(DrawTask(DrawTaskTypes::SettingWireFrame{ .enable = enable }));
 	}
 
 	void setting_culling(bool enable)
 	{
-		tasks.push_back(DrawTask(DrawTask::Content::SettingCulling{ .enable = enable }));
+		tasks.push_back(DrawTask(DrawTaskTypes::SettingCulling{ .enable = enable }));
 	}
 
 	void setting_blend(bool enable)
 	{
-		tasks.push_back(DrawTask(DrawTask::Content::SettingBlend{ .enable = enable }));
+		tasks.push_back(DrawTask(DrawTaskTypes::SettingBlend{ .enable = enable }));
 	}
 
 	void setting_depth(bool enable)
 	{
-		tasks.push_back(DrawTask(DrawTask::Content::SettingDepth{ .enable = enable }));
+		tasks.push_back(DrawTask(DrawTaskTypes::SettingDepth{ .enable = enable }));
 	}
 
 #if GFXENGINE_EDITOR
@@ -321,18 +256,28 @@ public:
 	}
 #endif // GFXENGINE_EDITOR
 
-	FrameCache cached(auto func)
+	FrameCache cached(auto func, size_t reserve_count = 32 * 1024)
 	{
-		FrameCache c;
+		FrameCache c = FrameCache::with_reserve(reserve_count);
 		caches.push_back(&c);
 		func();
 		caches.pop_back();
 		return c;
 	}
 
-	void add_cached(FrameCache const &cache)
+	void add_cached(FrameCache const &cache, std::weak_ptr<Image> _img = {})
 	{
-		add_vertices(cache.vertices, cache.indices);
+		add_vertices(cache.vertices, cache.indices, _img);
+	}
+
+	void clear()
+	{
+		data.clear();
+		tasks.clear();
+
+#if GFXENGINE_EDITOR
+	draw_editor = {};
+#endif // GFXENGINE_EDITOR
 	}
 };
 

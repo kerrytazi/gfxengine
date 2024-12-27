@@ -1,9 +1,12 @@
-[submodule "libs/glfw"]
-	path = libs/glfw
-	url = https://github.com/glfw/glfw.git
 [submodule "libs/glm"]
 	path = libs/glm
 	url = https://github.com/g-truc/glm.git
 [submodule "libs/imgui"]
 	path = libs/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "libs/libpng"]
+	path = libs/libpng
+	url = https://github.com/pnggroup/libpng.git
+[submodule "libs/zlib"]
+	path = libs/zlib
+	url = https://github.com/madler/zlib.git

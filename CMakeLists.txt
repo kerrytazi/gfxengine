@@ -9,7 +9,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Flags
-set(GFXENGINE_USE_GLFW OFF)
 set(GFXENGINE_EDITOR ON)
 
 set(PROJECT_SOURCES
@@ -18,8 +17,10 @@ set(PROJECT_SOURCES
 	cmake/imgui.cmake
 
 	src/include/gfxengine/base_application.hpp
+	src/include/gfxengine/file.hpp
 	src/include/gfxengine/frame.hpp
 	src/include/gfxengine/graphics.hpp
+	src/include/gfxengine/image.hpp
 	src/include/gfxengine/input_controller.hpp
 	src/include/gfxengine/math.hpp
 	src/include/gfxengine/platform.hpp
@@ -30,8 +31,10 @@ set(PROJECT_SOURCES
 	src/private/wglext.h
 
 	src/base_application.cpp
+	src/file.cpp
 	src/frame.cpp
 	src/graphics.cpp
+	src/image.cpp
 	src/main.cpp
 	src/platform.cpp
 	src/window.cpp
@@ -57,22 +60,30 @@ assign_source_group(${PROJECT_SOURCES})
 add_subdirectory(libs/glad)
 target_link_libraries(gfxengine glad)
 target_include_directories(gfxengine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/glad/include)
-
-if(GFXENGINE_USE_GLFW)
-	add_subdirectory(libs/glfw EXCLUDE_FROM_ALL)
-	add_dependencies(gfxengine glfw)
-	target_link_libraries(gfxengine glfw)
-
-	target_compile_definitions(gfxengine PUBLIC GFXENGINE_USE_GLFW=1)
-endif()
+set_target_properties(glad PROPERTIES FOLDER libs)
 
 if(GFXENGINE_EDITOR)
 	add_imgui()
 	target_link_libraries(gfxengine imgui)
+	set_target_properties(imgui PROPERTIES FOLDER libs)
 
 	target_compile_definitions(gfxengine PUBLIC GFXENGINE_EDITOR=1)
 endif()
 
-
 add_subdirectory(libs/glm)
 target_link_libraries(gfxengine glm)
+set_target_properties(glm PROPERTIES FOLDER libs)
+
+add_subdirectory(libs/zlib EXCLUDE_FROM_ALL)
+target_link_libraries(gfxengine zlibstatic)
+set_target_properties(zlibstatic PROPERTIES FOLDER libs)
+
+# let libpng use our zlib
+set(ZLIB_LIBRARY ${CMAKE_CURRENT_BINARY_DIR}/libs/zlib/Debug/zlibstaticd.lib)
+set(ZLIB_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/libs/zlib)
+
+add_subdirectory(libs/libpng EXCLUDE_FROM_ALL)
+target_link_libraries(gfxengine png_static)
+target_include_directories(png_static PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/libs/zlib)
+set_target_properties(png_static PROPERTIES FOLDER libs)
+set_target_properties(png_genfiles PROPERTIES FOLDER libs)

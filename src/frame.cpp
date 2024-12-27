@@ -11,16 +11,25 @@ void FrameCache::add_vertices(std::span<const Vertex> _vertices, std::span<const
 		indices[i] += offset;
 }
 
-void Frame::add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices)
+void Frame::add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices, std::weak_ptr<Image> _img /*= {}*/)
 {
-	if (!tasks.empty()
-		&& tasks.back().type == DrawTask::Type::DrawIndices)
+	bool batched = false;
+
+	if (!tasks.empty())
 	{
-		tasks.back().content.draw_indices.count += _indices.size();
+		if (auto content = std::get_if<DrawTaskTypes::DrawIndices>(&tasks.back()))
+		{
+			if (content->texture.lock() == _img.lock())
+			{
+				content->count += _indices.size();
+				batched = true;
+			}
+		}
 	}
-	else
+
+	if (!batched)
 	{
-		tasks.push_back(DrawTask(DrawTask::Content::DrawIndices{ .from = data.indices.size(), .count = _indices.size() }));
+		tasks.push_back(DrawTask(DrawTaskTypes::DrawIndices{ .from = data.indices.size(), .count = _indices.size(), .texture = _img }));
 	}
 
 	data.add_vertices(_vertices, _indices);

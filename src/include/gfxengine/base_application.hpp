@@ -16,14 +16,6 @@ protected:
 	{
 	}
 
-	virtual void on_update()
-	{
-	}
-
-	virtual void on_render(Frame &frame)
-	{
-	}
-
 public:
 
 	virtual ~BaseApplication() = default;

@@ -46,7 +46,10 @@ private:
 
 	GLuint shader_program;
 
+	GLuint texture;
+
 	GLuint mvp_index;
+	GLuint ourTexture_index;
 
 
 public:
@@ -71,15 +74,18 @@ public:
 
 in vec3 inPos;
 in vec4 inColor;
+in vec2 inTexCoord;
 
 uniform mat4 mvp;
 
 out vec4 varColor;
+out vec2 varTexCoord;
 
 void main()
 {
 	gl_Position = mvp * vec4(inPos, 1.0);
 	varColor = inColor;
+	varTexCoord = inTexCoord;
 }
 )tag";
 
@@ -87,12 +93,15 @@ void main()
 #version 460 core
 
 in vec4 varColor;
+in vec2 varTexCoord;
 
 out vec4 outFragColor;
 
+uniform sampler2D ourTexture;
+
 void main()
 {
-	outFragColor = varColor;
+	outFragColor = texture(ourTexture, varTexCoord) * varColor;
 }
 )tag";
 
@@ -152,7 +161,14 @@ void main()
 			glEnableVertexAttribArray(index);
 		}
 
+		{
+			GLuint index = glGetAttribLocation(shader_program, "inTexCoord");
+			glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex)));
+			glEnableVertexAttribArray(index);
+		}
+
 		mvp_index = glGetUniformLocation(shader_program, "mvp");
+		ourTexture_index = glGetUniformLocation(shader_program, "ourTexture");
 
 		glBindFragDataLocation(shader_program, 0, "outFragColor");
 
@@ -163,10 +179,18 @@ void main()
 		glFrontFace(GL_CCW);
 
 		glEnable(GL_DEPTH_TEST);
+
+		glGenTextures(1, &texture);
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, texture);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	}
 
 	~OpenGLGraphics()
 	{
+		glDeleteTextures(1, &texture);
 		glDeleteProgram(shader_program);
 		glDeleteBuffers(1, &element_buffer_object);
 		glDeleteBuffers(1, &vertex_buffer_object);
@@ -180,39 +204,46 @@ void main()
 
 		glUniformMatrix4fv(mvp_index, 1, GL_FALSE, &glm::identity<glm::mat4>()[0][0]);
 
+		std::shared_ptr<Image> last_img;
+
 		for (auto const &task : frame.tasks)
 		{
-			switch (task.type)
-			{
-				case DrawTask::Type::DrawIndices:
+			std::visit([&](auto &content) {
+				using T = std::decay_t<decltype(content)>;
+
+				if constexpr (std::is_same_v<T, DrawTaskTypes::DrawIndices>)
 				{
-					auto const &content = task.content.draw_indices;
+					if (auto img = content.texture.lock(); img != last_img)
+					{
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img->width, img->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img->data.data());
+						// glGenerateMipmap(GL_TEXTURE_2D);
+
+						glUniform1i(ourTexture_index, 0);
+
+						last_img = img;
+					}
+
 					glDrawElements(GL_TRIANGLES, content.count, GL_UNSIGNED_INT, reinterpret_cast<void const *>(content.from * sizeof(frame.data.indices[0])));
-					break;
 				}
-				case DrawTask::Type::UpdateMVP:
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::UpdateMVP>)
 				{
-					auto const &content = task.content.update_mvp;
 					glUniformMatrix4fv(mvp_index, 1, GL_FALSE, &content.mvp[0][0]);
-					break;
 				}
-				case DrawTask::Type::ClearBackground:
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::ClearBackground>)
 				{
-					auto const &content = task.content.clear_background;
 					glClearColor(content.color.r/255.0f, content.color.g/255.0f, content.color.b/255.0f, content.color.a/255.0f);
 					glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-					break;
 				}
-
-				case DrawTask::Type::SettingWireFrame:
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::SettingWireFrame>)
 				{
-					auto const &content = task.content.setting_wireframe;
 					glPolygonMode(GL_FRONT_AND_BACK, content.enable ? GL_LINE : GL_FILL);
-					break;
 				}
-				case DrawTask::Type::SettingCulling:
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::SettingCulling>)
 				{
-					auto const &content = task.content.setting_culling;
 					if (content.enable)
 					{
 						glEnable(GL_CULL_FACE);
@@ -223,17 +254,15 @@ void main()
 					{
 						glDisable(GL_CULL_FACE);
 					}
-					break;
 				}
-				case DrawTask::Type::SettingBlend:
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::SettingBlend>)
 				{
-					auto const &content = task.content.setting_blend;
 					throw 1;
-					break;
 				}
-				case DrawTask::Type::SettingDepth:
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::SettingDepth>)
 				{
-					auto const &content = task.content.setting_depth;
 					if (content.enable)
 					{
 						glEnable(GL_DEPTH_TEST);
@@ -242,9 +271,8 @@ void main()
 					{
 						glDisable(GL_DEPTH_TEST);
 					}
-					break;
 				}
-			}
+			}, task);
 		}
 	}
 };
