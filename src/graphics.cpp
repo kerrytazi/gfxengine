@@ -4,6 +4,8 @@
 
 #include <glad/glad.h>
 
+#include <algorithm>
+
 class OpenGLStatic
 {
 private:
@@ -36,7 +38,7 @@ public:
 	}
 };
 
-class OpenGLGraphics : public BaseGraphics
+class OpenGLGraphics : public Graphics
 {
 private:
 
@@ -199,12 +201,21 @@ void main()
 
 	virtual void draw(Frame const &frame) override
 	{
-		glBufferData(GL_ARRAY_BUFFER, sizeof(frame.data.vertices[0]) * frame.data.vertices.size(), frame.data.vertices.data(), GL_STATIC_DRAW);
-		glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(frame.data.indices[0]) * frame.data.indices.size(), frame.data.indices.data(), GL_STATIC_DRAW);
+		GLuint active_vao = (GLuint)-1;
+		std::shared_ptr<Image> active_img;
+
+		if (!frame.data.empty())
+		{
+			active_vao = vertex_array_object;
+			glBindVertexArray(vertex_array_object);
+			glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
+
+			glBufferData(GL_ARRAY_BUFFER, sizeof(frame.data.vertices[0]) * frame.data.vertices.size(), frame.data.vertices.data(), GL_STATIC_DRAW);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(frame.data.indices[0]) * frame.data.indices.size(), frame.data.indices.data(), GL_STATIC_DRAW);
+		}
 
 		glUniformMatrix4fv(mvp_index, 1, GL_FALSE, &glm::identity<glm::mat4>()[0][0]);
-
-		std::shared_ptr<Image> last_img;
 
 		for (auto const &task : frame.tasks)
 		{
@@ -213,17 +224,46 @@ void main()
 
 				if constexpr (std::is_same_v<T, DrawTaskTypes::DrawIndices>)
 				{
-					if (auto img = content.texture.lock(); img != last_img)
+					if (active_vao != vertex_array_object)
 					{
-						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img->width, img->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img->data.data());
+						active_vao = vertex_array_object;
+						glBindVertexArray(vertex_array_object);
+					}
+
+					if (content.texture != active_img)
+					{
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, content.texture->width, content.texture->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, content.texture->data.data());
 						// glGenerateMipmap(GL_TEXTURE_2D);
 
 						glUniform1i(ourTexture_index, 0);
 
-						last_img = img;
+						active_img = content.texture;
 					}
 
 					glDrawElements(GL_TRIANGLES, content.count, GL_UNSIGNED_INT, reinterpret_cast<void const *>(content.from * sizeof(frame.data.indices[0])));
+				}
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::DrawCached>)
+				{
+					std::shared_ptr<FrameCacheData> cache = std::static_pointer_cast<FrameCacheData>(content.graphics_cache);
+
+					if (active_vao != cache->vertex_array_object)
+					{
+						active_vao = cache->vertex_array_object;
+						glBindVertexArray(cache->vertex_array_object);
+					}
+
+					if (content.texture != active_img)
+					{
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, content.texture->width, content.texture->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, content.texture->data.data());
+						// glGenerateMipmap(GL_TEXTURE_2D);
+
+						glUniform1i(ourTexture_index, 0);
+
+						active_img = content.texture;
+					}
+
+					glDrawElements(GL_TRIANGLES, cache->count, GL_UNSIGNED_INT, 0);
 				}
 				else
 				if constexpr (std::is_same_v<T, DrawTaskTypes::UpdateMVP>)
@@ -275,9 +315,86 @@ void main()
 			}, task);
 		}
 	}
+
+	struct FrameCacheData : public FrameCacheGraphicsCache
+	{
+		OpenGLGraphics &graphics;
+
+		GLuint vertex_array_object;
+		GLuint vertex_buffer_object;
+		GLuint element_buffer_object;
+		size_t count = 0;
+
+		FrameCacheData(OpenGLGraphics &_graphics, FrameCache &cache)
+			: graphics{ _graphics }
+		{
+			glGenVertexArrays(1, &vertex_array_object);
+			glBindVertexArray(vertex_array_object);
+
+			glGenBuffers(1, &vertex_buffer_object);
+			glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
+
+			glGenBuffers(1, &element_buffer_object);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
+
+			glBufferData(GL_ARRAY_BUFFER, sizeof(cache.vertices[0]) * cache.vertices.size(), cache.vertices.data(), GL_STATIC_DRAW);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cache.indices[0]) * cache.indices.size(), cache.indices.data(), GL_STATIC_DRAW);
+			count = cache.indices.size();
+
+			{
+				GLuint index = glGetAttribLocation(_graphics.shader_program, "inPos");
+				glVertexAttribPointer(index, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, pos)));
+				glEnableVertexAttribArray(index);
+			}
+
+			{
+				GLuint index = glGetAttribLocation(_graphics.shader_program, "inColor");
+				glVertexAttribPointer(index, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, color)));
+				//glVertexAttribPointer(index, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, color)));
+				glEnableVertexAttribArray(index);
+			}
+
+			{
+				GLuint index = glGetAttribLocation(_graphics.shader_program, "inTexCoord");
+				glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex)));
+				glEnableVertexAttribArray(index);
+			}
+		}
+
+		~FrameCacheData()
+		{
+			glDeleteBuffers(1, &element_buffer_object);
+			glDeleteBuffers(1, &vertex_buffer_object);
+			glDeleteVertexArrays(1, &vertex_array_object);
+
+			graphics.remove_cache(*this);
+		}
+	};
+
+	std::vector<std::weak_ptr<FrameCacheData>> cache_data;
+
+	virtual void cache(FrameCache &cache) override
+	{
+		auto data = std::make_shared<FrameCacheData>(*this, cache);
+		cache_data.push_back(data);
+		cache.graphics_cache = data;
+	}
+
+	void remove_cache(FrameCacheData const &data)
+	{
+		const auto func = [&](auto const &ptr) {
+			if (auto sptr = ptr.lock())
+				return &*sptr == &data;
+
+			return false;
+		};
+
+		if (auto it = std::find_if(cache_data.begin(), cache_data.end(), func); it != cache_data.end())
+			cache_data.erase(it);
+	}
 };
 
-std::unique_ptr<BaseGraphics> _create_graphics()
+std::unique_ptr<Graphics> _create_graphics()
 {
 	return std::make_unique<OpenGLGraphics>();
 }

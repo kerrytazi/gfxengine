@@ -1,12 +1,14 @@
 #pragma once
 
+class FrameCache;
 class Frame;
 
-class BaseGraphics
+class Graphics
 {
 public:
 
-	virtual ~BaseGraphics() = default;
+	virtual ~Graphics() = default;
 
 	virtual void draw(Frame const &frame) = 0;
+	virtual void cache(FrameCache &cache) = 0;
 };

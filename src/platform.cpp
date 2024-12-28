@@ -4,9 +4,9 @@
 
 #include "private/my_windows.hpp"
 
-extern std::unique_ptr<BaseWindow> _create_window(CreateWindowParams const &params);
+extern std::unique_ptr<Window> _create_window(CreateWindowParams const &params);
 
-class WindowsPlatform : public BasePlatform
+class WindowsPlatform : public Platform
 {
 private:
 
@@ -21,7 +21,7 @@ public:
 		frequency = (double)value;
 	}
 
-	virtual std::unique_ptr<BaseWindow> create_window(CreateWindowParams const &params) const override
+	virtual std::unique_ptr<Window> create_window(CreateWindowParams const &params) const override
 	{
 		return _create_window(params);
 	}
@@ -34,7 +34,7 @@ public:
 	}
 };
 
-std::unique_ptr<BasePlatform> _create_platform()
+std::unique_ptr<Platform> _create_platform()
 {
 	return std::make_unique<WindowsPlatform>();
 }

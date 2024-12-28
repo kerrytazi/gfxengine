@@ -5,8 +5,7 @@
 #include "gfxengine/graphics.hpp"
 #include "gfxengine/window_event_handler.hpp"
 
-
-extern std::unique_ptr<BaseGraphics> _create_graphics();
+extern std::unique_ptr<Graphics> _create_graphics();
 
 #if GFXENGINE_PLATFORM_WINDOWS
 
@@ -216,11 +215,11 @@ public:
 	}
 };
 
-class WindowsWindow : public BaseWindow
+class WindowsWindow : public Window
 {
 private:
 
-	BasePlatform &platform;
+	Platform &platform;
 
 	HWND hwnd = nullptr;
 	HDC hdc = nullptr;
@@ -230,7 +229,7 @@ private:
 	bool raw_mouse = false;
 	POINT save_mouse_pos{};
 
-	std::unique_ptr<BaseGraphics> graphics;
+	std::unique_ptr<Graphics> graphics;
 
 	WindowEventHandler *window_event_handler = nullptr;
 	
@@ -675,6 +674,11 @@ public:
 		SwapBuffers(hdc);
 	}
 
+	virtual Graphics &get_graphics() const override
+	{
+		return *graphics;
+	}
+
 	virtual void lock_mouse(bool lock) override
 	{
 		if (lock)
@@ -847,7 +851,6 @@ public:
 		});
 	}
 
-	// Unsafe as f*ck. Don't call twice
 	[[nodiscard]]
 	std::vector<WindowEventUnion> const &get_and_release_events()
 	{
@@ -858,7 +861,7 @@ public:
 	}
 };
 
-class WindowsWindowThread : public BaseWindow
+class WindowsWindowThread : public Window
 {
 private:
 
@@ -910,8 +913,7 @@ private:
 		});
 
 		// Wake up window thread
-		if (_window)
-			PostMessageW(_window->get_hwnd(), WM_USER, 0, 0);
+		PostMessageW(_window->get_hwnd(), WM_USER, 0, 0);
 	}
 
 	template <typename TRet>
@@ -1027,12 +1029,12 @@ public:
 
 	virtual void draw(Frame const &frame) override
 	{
-		if (_window)
-			_window->draw(frame);
+		_window->draw(frame);
+	}
 
-		//push_task_and_wait<void>([&](WindowsWindow &window) {
-		//	window.draw(frame);
-		//});
+	virtual Graphics &get_graphics() const override
+	{
+		return _window->get_graphics();
 	}
 
 	virtual void lock_mouse(bool lock) override
@@ -1060,7 +1062,7 @@ public:
 	}
 };
 
-std::unique_ptr<BaseWindow> _create_window(CreateWindowParams const &params)
+std::unique_ptr<Window> _create_window(CreateWindowParams const &params)
 {
 	//return std::make_unique<WindowsWindow>(params);
 	return std::make_unique<WindowsWindowThread>(params);

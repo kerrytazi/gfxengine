@@ -1,7 +1,7 @@
 #include "gfxengine/base_application.hpp"
 #include "gfxengine/platform.hpp"
 
-extern std::unique_ptr<BasePlatform> _create_platform();
+extern std::unique_ptr<Platform> _create_platform();
 
 void startup()
 {

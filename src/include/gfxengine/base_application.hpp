@@ -3,11 +3,11 @@
 #include <memory>
 #include <ranges>
 
-class BasePlatform;
-class BaseWindow;
+class Platform;
+class Window;
 class Frame;
 
-class BaseApplication
+class Application
 {
 protected:
 
@@ -18,7 +18,7 @@ protected:
 
 public:
 
-	virtual ~BaseApplication() = default;
+	virtual ~Application() = default;
 };
 
-extern std::unique_ptr<BaseApplication> create_application(BasePlatform &platform);
+extern std::unique_ptr<Application> create_application(Platform &platform);

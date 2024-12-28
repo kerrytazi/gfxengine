@@ -1,24 +1,25 @@
 #pragma once
 
 class Frame;
-class BasePlatform;
-class BaseGraphics;
+class Platform;
+class Graphics;
 class WindowEventHandler;
 
 struct CreateWindowParams
 {
-	BasePlatform &platform;
+	Platform &platform;
 	WindowEventHandler *window_event_handler = nullptr;
 };
 
-class BaseWindow
+class Window
 {
 public:
 
-	virtual ~BaseWindow() = default;
+	virtual ~Window() = default;
 
 	virtual void poll_events() = 0;
 	virtual void draw(Frame const &frame) = 0;
+	virtual Graphics &get_graphics() const = 0;
 
 	virtual void lock_mouse(bool lock) = 0;
 	virtual void close() = 0;

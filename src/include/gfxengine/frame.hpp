@@ -51,13 +51,26 @@ struct MatrixGuard
 	~MatrixGuard();
 };
 
+struct FrameCacheGraphicsCache
+{
+	virtual ~FrameCacheGraphicsCache() = default;
+};
+
 struct DrawTaskTypes
 {
 	struct DrawIndices
 	{
 		size_t from;
 		size_t count;
-		std::weak_ptr<Image> texture;
+		std::shared_ptr<Image> texture;
+	};
+
+	struct DrawCached
+	{
+		std::shared_ptr<FrameCacheGraphicsCache> graphics_cache;
+		std::shared_ptr<Image> texture;
+		size_t stat_vertices;
+		size_t stat_indices;
 	};
 
 	struct UpdateMVP
@@ -93,6 +106,7 @@ struct DrawTaskTypes
 
 using DrawTask = std::variant<
 	DrawTaskTypes::DrawIndices,
+	DrawTaskTypes::DrawCached,
 	DrawTaskTypes::UpdateMVP,
 	DrawTaskTypes::ClearBackground,
 	DrawTaskTypes::SettingWireFrame,
@@ -102,6 +116,7 @@ using DrawTask = std::variant<
 
 struct FrameCache
 {
+	std::shared_ptr<FrameCacheGraphicsCache> graphics_cache;
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
 
@@ -122,9 +137,20 @@ struct FrameCache
 
 	void clear()
 	{
+		graphics_cache = {};
 		vertices.clear();
 		indices.clear();
 	}
+};
+
+struct FrameStats
+{
+	size_t api_calls;
+	size_t draw_calls;
+	size_t vertices;
+	size_t indices;
+	size_t cache_vertices;
+	size_t cache_indices;
 };
 
 class Frame
@@ -146,9 +172,9 @@ public:
 
 public:
 
-	void add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices, std::weak_ptr<Image> _img = {});
+	void add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices, std::shared_ptr<Image> _img = {});
 
-	void add_triangle(Vertex const &v0, Vertex const &v1, Vertex const &v2, std::weak_ptr<Image> img = {})
+	void add_triangle(Vertex const &v0, Vertex const &v1, Vertex const &v2, std::shared_ptr<Image> img = {})
 	{
 		add_vertices(
 			std::initializer_list<Vertex>{ v0, v1, v2 },
@@ -157,12 +183,12 @@ public:
 		);
 	}
 
-	void add_triangle(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, Color color = Color::WHITE, std::weak_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {})
+	void add_triangle(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, Color color = Color::WHITE, std::shared_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {})
 	{
 		add_triangle(Vertex{ glm::vec3(pos0, 0.0f), color, tex0 }, { glm::vec3(pos1, 0.0f), color, tex1 }, { glm::vec3(pos2, 0.0f), color, tex2 });
 	}
 
-	void add_quad(Vertex const &v0, Vertex const &v1, Vertex const &v2, Vertex const &v3, std::weak_ptr<Image> img = {})
+	void add_quad(Vertex const &v0, Vertex const &v1, Vertex const &v2, Vertex const &v3, std::shared_ptr<Image> img = {})
 	{
 		add_vertices(
 			std::initializer_list<Vertex>{ v0, v1, v2, v3 },
@@ -171,12 +197,12 @@ public:
 		);
 	}
 
-	void add_quad(glm::vec3 const &pos0, glm::vec3 const &pos1, glm::vec3 const &pos2, glm::vec3 const &pos3, Color color = Color::WHITE, std::weak_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {}, glm::vec2 const &tex3 = {})
+	void add_quad(glm::vec3 const &pos0, glm::vec3 const &pos1, glm::vec3 const &pos2, glm::vec3 const &pos3, Color color = Color::WHITE, std::shared_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {}, glm::vec2 const &tex3 = {})
 	{
 		add_quad(Vertex{ pos0, color, tex0 }, { pos1, color, tex1 }, { pos2, color, tex2 }, { pos3, color, tex3 }, img);
 	}
 
-	void add_quad(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, glm::vec2 const &pos3, Color color = Color::WHITE, std::weak_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {}, glm::vec2 const &tex3 = {})
+	void add_quad(glm::vec2 const &pos0, glm::vec2 const &pos1, glm::vec2 const &pos2, glm::vec2 const &pos3, Color color = Color::WHITE, std::shared_ptr<Image> img = {}, glm::vec2 const &tex0 = {}, glm::vec2 const &tex1 = {}, glm::vec2 const &tex2 = {}, glm::vec2 const &tex3 = {})
 	{
 		add_quad(Vertex{ glm::vec3(pos0, 0.0f), color, tex0 }, { glm::vec3(pos1, 0.0f), color, tex1 }, { glm::vec3(pos2, 0.0f), color, tex2 }, { glm::vec3(pos3, 0.0f), color, tex3 }, img);
 	}
@@ -265,9 +291,21 @@ public:
 		return c;
 	}
 
-	void add_cached(FrameCache const &cache, std::weak_ptr<Image> _img = {})
+	void add_cached(FrameCache const &cache, std::shared_ptr<Image> _img = {})
 	{
-		add_vertices(cache.vertices, cache.indices, _img);
+		if (cache.graphics_cache)
+		{
+			tasks.push_back(DrawTask(DrawTaskTypes::DrawCached{
+				.graphics_cache = cache.graphics_cache,
+				.texture = _img,
+				.stat_vertices = cache.vertices.size(),
+				.stat_indices = cache.indices.size(),
+			}));
+		}
+		else
+		{
+			add_vertices(cache.vertices, cache.indices, _img);
+		}
 	}
 
 	void clear()
@@ -279,6 +317,8 @@ public:
 	draw_editor = {};
 #endif // GFXENGINE_EDITOR
 	}
+
+	FrameStats get_stats() const;
 };
 
 inline MatrixGuard::MatrixGuard(Frame &_frame, glm::mat4 *_matrix)
