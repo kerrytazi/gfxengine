@@ -77,17 +77,20 @@ public:
 in vec3 inPos;
 in vec4 inColor;
 in vec2 inTexCoord;
+in vec2 inTexOffset;
 
 uniform mat4 mvp;
 
 out vec4 varColor;
 out vec2 varTexCoord;
+out vec2 varTexOffset;
 
 void main()
 {
 	gl_Position = mvp * vec4(inPos, 1.0);
 	varColor = inColor;
 	varTexCoord = inTexCoord;
+	varTexOffset = inTexOffset;
 }
 )tag";
 
@@ -96,6 +99,7 @@ void main()
 
 in vec4 varColor;
 in vec2 varTexCoord;
+in vec2 varTexOffset;
 
 out vec4 outFragColor;
 
@@ -103,7 +107,7 @@ uniform sampler2D ourTexture;
 
 void main()
 {
-	outFragColor = texture(ourTexture, varTexCoord) * varColor;
+	outFragColor = texture(ourTexture, varTexOffset + mod(varTexCoord, 1.0)) * varColor;
 }
 )tag";
 
@@ -165,7 +169,13 @@ void main()
 
 		{
 			GLuint index = glGetAttribLocation(shader_program, "inTexCoord");
-			glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex)));
+			glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_coord)));
+			glEnableVertexAttribArray(index);
+		}
+
+		{
+			GLuint index = glGetAttribLocation(shader_program, "inTexOffset");
+			glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_offset)));
 			glEnableVertexAttribArray(index);
 		}
 
@@ -356,7 +366,13 @@ void main()
 
 			{
 				GLuint index = glGetAttribLocation(_graphics.shader_program, "inTexCoord");
-				glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex)));
+				glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_coord)));
+				glEnableVertexAttribArray(index);
+			}
+
+			{
+				GLuint index = glGetAttribLocation(_graphics.shader_program, "inTexOffset");
+				glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_offset)));
 				glEnableVertexAttribArray(index);
 			}
 		}

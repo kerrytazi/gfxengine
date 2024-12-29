@@ -18,7 +18,8 @@ struct Vertex
 {
 	glm::vec3 pos;
 	Color color;
-	glm::vec2 tex;
+	glm::vec2 tex_coord;
+	glm::vec2 tex_offset;
 };
 
 struct Frame;
