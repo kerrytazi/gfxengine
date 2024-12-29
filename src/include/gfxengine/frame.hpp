@@ -117,7 +117,6 @@ using DrawTask = std::variant<
 
 struct FrameCache
 {
-	std::shared_ptr<FrameCacheGraphicsCache> graphics_cache;
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
 
@@ -138,7 +137,6 @@ struct FrameCache
 
 	void clear()
 	{
-		graphics_cache = {};
 		vertices.clear();
 		indices.clear();
 	}
@@ -283,21 +281,19 @@ public:
 	}
 #endif // GFXENGINE_EDITOR
 
-	FrameCache cached(auto func, size_t reserve_count = 32 * 1024)
+	void cached(FrameCache &cache, auto func)
 	{
-		FrameCache c = FrameCache::with_reserve(reserve_count);
-		caches.push_back(&c);
+		caches.push_back(&cache);
 		func();
 		caches.pop_back();
-		return c;
 	}
 
-	void add_cached(FrameCache const &cache, std::shared_ptr<Image> _img = {})
+	void add_cached(FrameCache const &cache, std::shared_ptr<FrameCacheGraphicsCache> const &graphics_cache, std::shared_ptr<Image> _img = {})
 	{
-		if (cache.graphics_cache)
+		if (graphics_cache)
 		{
 			tasks.push_back(DrawTask(DrawTaskTypes::DrawCached{
-				.graphics_cache = cache.graphics_cache,
+				.graphics_cache = graphics_cache,
 				.texture = _img,
 				.stat_vertices = cache.vertices.size(),
 				.stat_indices = cache.indices.size(),

@@ -335,7 +335,7 @@ void main()
 		GLuint element_buffer_object;
 		size_t count = 0;
 
-		FrameCacheData(OpenGLGraphics &_graphics, FrameCache &cache)
+		FrameCacheData(OpenGLGraphics &_graphics)
 			: graphics{ _graphics }
 		{
 			glGenVertexArrays(1, &vertex_array_object);
@@ -346,10 +346,6 @@ void main()
 
 			glGenBuffers(1, &element_buffer_object);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
-
-			glBufferData(GL_ARRAY_BUFFER, sizeof(cache.vertices[0]) * cache.vertices.size(), cache.vertices.data(), GL_STATIC_DRAW);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cache.indices[0]) * cache.indices.size(), cache.indices.data(), GL_STATIC_DRAW);
-			count = cache.indices.size();
 
 			{
 				GLuint index = glGetAttribLocation(_graphics.shader_program, "inPos");
@@ -385,15 +381,31 @@ void main()
 
 			graphics.remove_cache(*this);
 		}
+
+		void upload(FrameCache &cache, bool bind = true)
+		{
+			glBindVertexArray(vertex_array_object);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(cache.vertices[0]) * cache.vertices.size(), cache.vertices.data(), GL_STATIC_DRAW);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cache.indices[0]) * cache.indices.size(), cache.indices.data(), GL_STATIC_DRAW);
+			count = cache.indices.size();
+		}
 	};
 
 	std::vector<std::weak_ptr<FrameCacheData>> cache_data;
 
-	virtual void cache(FrameCache &cache) override
+	virtual void cache(FrameCache &cache, std::shared_ptr<FrameCacheGraphicsCache> &graphics_cache) override
 	{
-		auto data = std::make_shared<FrameCacheData>(*this, cache);
-		cache_data.push_back(data);
-		cache.graphics_cache = data;
+		if (graphics_cache)
+		{
+			std::static_pointer_cast<FrameCacheData>(graphics_cache)->upload(cache);
+		}
+		else
+		{
+			auto data = std::make_shared<FrameCacheData>(*this);
+			data->upload(cache, false);
+			cache_data.push_back(data);
+			graphics_cache = std::move(data);
+		}
 	}
 
 	void remove_cache(FrameCacheData const &data)

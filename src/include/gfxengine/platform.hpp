@@ -16,4 +16,5 @@ public:
 
 	[[nodiscard]]
 	virtual double get_time() const = 0;
+	virtual void sleep(double seconds) = 0;
 };

@@ -10,16 +10,14 @@ void startup()
 	app->start();
 }
 
-#if GFXENGINE_PLATFORM_WINDOWS
 int WinMain()
 {
 	startup();
 	return 0;
 }
-#else
+
 int main()
 {
 	startup();
 	return 0;
 }
-#endif // GFXENGINE_PLATFORM_WINDOWS
