@@ -16,13 +16,16 @@ set(PROJECT_SOURCES
 	cmake/gfxengine.cmake
 	cmake/imgui.cmake
 
+	src/include/gfxengine/buffered_cstr.hpp
 	src/include/gfxengine/base_application.hpp
 	src/include/gfxengine/file.hpp
 	src/include/gfxengine/frame.hpp
 	src/include/gfxengine/graphics.hpp
 	src/include/gfxengine/image.hpp
 	src/include/gfxengine/input_controller.hpp
+	src/include/gfxengine/logger.hpp
 	src/include/gfxengine/math.hpp
+	src/include/gfxengine/noise_generator.hpp
 	src/include/gfxengine/platform.hpp
 	src/include/gfxengine/window.hpp
 	src/include/gfxengine/window_event_handler.hpp
@@ -35,7 +38,9 @@ set(PROJECT_SOURCES
 	src/frame.cpp
 	src/graphics.cpp
 	src/image.cpp
+	src/logger.cpp
 	src/main.cpp
+	src/noise_generator.cpp
 	src/platform.cpp
 	src/window.cpp
 )
@@ -44,11 +49,7 @@ add_library(gfxengine ${PROJECT_SOURCES})
 
 target_compile_definitions(gfxengine PUBLIC _ITERATOR_DEBUG_LEVEL=0)
 
-if (MSVC AND (MSVC_VERSION GREATER_EQUAL 1914))
-	target_compile_options(gfxengine INTERFACE "/Zc:__cplusplus")
-endif()
-
-if(WIN32)
+if (WIN32)
 	target_compile_definitions(gfxengine PRIVATE GFXENGINE_PLATFORM_WINDOWS=1)
 endif()
 
@@ -62,17 +63,13 @@ target_link_libraries(gfxengine glad)
 target_include_directories(gfxengine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/glad/include)
 set_target_properties(glad PROPERTIES FOLDER libs)
 
-if(GFXENGINE_EDITOR)
+if (GFXENGINE_EDITOR)
 	add_imgui()
 	target_link_libraries(gfxengine imgui)
 	set_target_properties(imgui PROPERTIES FOLDER libs)
 
 	target_compile_definitions(gfxengine PUBLIC GFXENGINE_EDITOR=1)
 endif()
-
-add_subdirectory(libs/glm)
-target_link_libraries(gfxengine glm)
-set_target_properties(glm PROPERTIES FOLDER libs)
 
 add_subdirectory(libs/zlib EXCLUDE_FROM_ALL)
 target_link_libraries(gfxengine zlibstatic)

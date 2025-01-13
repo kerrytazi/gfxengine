@@ -12,8 +12,8 @@ class InputController
 {
 public:
 
-	glm::vec3 position{};
-	glm::vec2 rotation{};
+	vec3 position{};
+	vec2 rotation{};
 
 	enum class Direction : uint8_t
 	{
@@ -78,7 +78,7 @@ public:
 		speed = _speed;
 	}
 
-	void rotate_view(double event_time, glm::vec2 _rotation)
+	void rotate_view(double event_time, vec2 _rotation)
 	{
 		update_all(event_time);
 
@@ -104,12 +104,12 @@ public:
 		sensitivity = _sensitivity;
 	}
 
-	glm::vec3 calc_front_direction() const
+	vec3 calc_front_direction() const
 	{
-		return glm::vec3{
-			cos(glm::radians(rotation.y)) * cos(glm::radians(rotation.x)),
-			sin(glm::radians(rotation.x)),
-			sin(glm::radians(rotation.y)) * cos(glm::radians(rotation.x)),
+		return vec3{
+			math::cos(math::deg_to_rad(rotation.y)) * math::cos(math::deg_to_rad(rotation.x)),
+			math::sin(math::deg_to_rad(rotation.x)),
+			math::sin(math::deg_to_rad(rotation.y)) * math::cos(math::deg_to_rad(rotation.x)),
 		};
 	}
 
@@ -123,11 +123,11 @@ private:
 
 	void update_front_direction()
 	{
-		glm::vec3 direction = calc_front_direction();
+		vec3 direction = calc_front_direction();
 
-		glm::vec3 front = glm::normalize(glm::vec3{ direction.x, 0.0f, direction.z });
-		glm::vec3 up = glm::vec3{ 0.0f, 1.0f, 0.0f };
-		glm::vec3 right = glm::normalize(glm::cross(front, up));
+		vec3 front = vec3{ direction.x, 0.0f, direction.z }.normalize();
+		vec3 up = vec3{ 0.0f, 1.0f, 0.0f };
+		vec3 right = front.cross(up).normalize();
 
 		directions[(int)Direction::Forward] = front;
 		directions[(int)Direction::Back] = -front;
@@ -137,7 +137,7 @@ private:
 		directions[(int)Direction::Down] = -up;
 	}
 
-	glm::vec3 directions[DIRECTION_MAX]{};
+	vec3 directions[DIRECTION_MAX]{};
 	double last_times[DIRECTION_MAX]{};
 
 	float speed = 1.0f;

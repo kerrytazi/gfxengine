@@ -1,3 +1,7 @@
+if(WIN32)
+	#set(CMAKE_GENERATOR_TOOLSET "ClangCL")
+endif()
+
 function(gfxengine_application target gfxengine_path sources)
 	include(${CMAKE_CURRENT_SOURCE_DIR}/../gfxengine/cmake/gfxengine.cmake)
 

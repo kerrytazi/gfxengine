@@ -65,8 +65,8 @@ struct MouseEvent
 	Type type;
 	Key key;
 	bool locked;
-	glm::vec2 pos; // delta if locked
-	glm::vec2 scroll;
+	vec2 pos; // delta if locked
+	vec2 scroll;
 };
 
 class WindowEventHandler

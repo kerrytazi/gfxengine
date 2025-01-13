@@ -6,10 +6,8 @@
 #include <string_view>
 #include <ranges>
 
-class Image
+struct Image
 {
-public:
-
 	enum class Format
 	{
 		RGBA,

@@ -37,6 +37,13 @@ public:
 		return _create_window(params);
 	}
 
+	virtual uint64_t get_system_time_ms() const override
+	{
+		uint64_t t = 0;
+		GetSystemTimeAsFileTime((FILETIME *)&t);
+		return t / 10000 - 0x19DB1DED53E8000ull / 10000;
+	}
+
 	virtual double get_time() const override
 	{
 		uint64_t value;
@@ -49,6 +56,11 @@ public:
 		LARGE_INTEGER interval;
 		interval.QuadPart = seconds * -10000000.0;
 		NtDelayExecution(false, &interval);
+	}
+
+	virtual void debug_output(char const *c_str, size_t len) override
+	{
+		OutputDebugStringA(c_str);
 	}
 };
 

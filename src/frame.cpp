@@ -1,65 +1,51 @@
 #include "gfxengine/frame.hpp"
 
-void FrameCache::add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices)
+void Frame::add_vertices(std::shared_ptr<Material> const &material, std::span<const uint8_t> vertices, std::span<const uint32_t> indices)
 {
-	const uint32_t offset = vertices.size();
-
-	vertices.insert(vertices.end(), _vertices.begin(), _vertices.end());
-
-	indices.insert(indices.end(), _indices.begin(), _indices.end());
-	for (auto i = indices.size() - _indices.size(); i != indices.size(); ++i)
-		indices[i] += offset;
-}
-
-void Frame::add_vertices(std::span<const Vertex> _vertices, std::span<const uint32_t> _indices, std::shared_ptr<Image> _img /*= {}*/)
-{
-	bool batched = false;
-
 	if (!tasks.empty())
 	{
-		if (auto content = std::get_if<DrawTaskTypes::DrawIndices>(&tasks.back()))
+		if (DrawTaskTypes::DrawMaterial *prev = std::get_if<DrawTaskTypes::DrawMaterial>(&tasks.back()))
 		{
-			if (content->texture == _img)
+			if (prev->material == material)
 			{
-				content->count += _indices.size();
-				batched = true;
+				size_t prev_vertices = prev->vertices.size() / material->attribute_info.total_byte_size;
+				size_t prev_indices = prev->indices.size();
+
+				prev->vertices.insert(prev->vertices.end(), vertices.begin(), vertices.end());
+				prev->indices.insert(prev->indices.end(), indices.begin(), indices.end());
+
+				size_t new_indices = prev->indices.size();
+
+				for (size_t i = prev_indices; i != new_indices; ++i)
+					prev->indices[i] += (uint32_t)prev_vertices;
+
+				return;
 			}
 		}
 	}
 
-	if (!batched)
-	{
-		tasks.push_back(DrawTask(DrawTaskTypes::DrawIndices{ .from = data.indices.size(), .count = _indices.size(), .texture = _img }));
-	}
-
-	data.add_vertices(_vertices, _indices);
-
-	for (auto cache : caches)
-		cache->add_vertices(_vertices, _indices);
+	tasks.push_back(DrawTask(DrawTaskTypes::DrawMaterial{
+		.material = material,
+		.vertices = std::vector<uint8_t>(vertices.begin(), vertices.end()),
+		.indices = std::vector<uint32_t>(indices.begin(), indices.end()),
+	}));
 }
 
 FrameStats Frame::get_stats() const
 {
 	FrameStats result{};
 
-	result.vertices = data.vertices.size();
-	result.indices = data.indices.size();
-
 	for (auto const &task : tasks)
 	{
 		std::visit([&](auto const &content) {
 			using T = std::decay_t<decltype(content)>;
 
-			if constexpr (std::is_same_v<T, DrawTaskTypes::DrawIndices>)
+			if constexpr (std::is_same_v<T, DrawTaskTypes::DrawMaterial>)
 			{
 				result.draw_calls += 1;
-			}
-			else
-			if constexpr (std::is_same_v<T, DrawTaskTypes::DrawCached>)
-			{
-				result.draw_calls += 1;
-				result.cache_vertices += content.stat_vertices;
-				result.cache_indices += content.stat_indices;
+
+				result.vertices += content.vertices.size() / content.material->attribute_info.total_byte_size;
+				result.indices += content.indices.size();
 			}
 			else
 			{

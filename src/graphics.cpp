@@ -6,6 +6,26 @@
 
 #include <algorithm>
 
+
+static constexpr GLenum type2gltype(ShaderFieldType t)
+{
+	static_assert(ShaderFieldType_version == 1, "Update type2gltype::table");
+	constexpr GLenum table[]{
+		GL_BYTE, GL_UNSIGNED_BYTE,
+		GL_SHORT, GL_UNSIGNED_SHORT,
+		GL_INT, GL_UNSIGNED_INT,
+		0, 0, // I64 U64
+		GL_FLOAT, GL_DOUBLE,
+		0, // Matrix4
+		0, // Texture
+	};
+
+	return table[size_t(t)];
+}
+
+const int WIDTH = 1000;
+const int HEIGHT = 1000;
+
 class OpenGLStatic
 {
 private:
@@ -38,21 +58,209 @@ public:
 	}
 };
 
+namespace OpenGL
+{
+
+
+template <typename T, typename FDestruct, T Default = T(-1)>
+struct MoveOnly
+{
+	T val = Default;
+
+	constexpr MoveOnly() = default;
+
+	constexpr MoveOnly(T _val)
+		: val{ _val }
+	{
+	}
+
+	~MoveOnly()
+	{
+		if (val != Default)
+		{
+			FDestruct{}(val);
+			val = Default;
+		}
+	}
+
+	MoveOnly(MoveOnly const &) = delete;
+	MoveOnly &operator = (MoveOnly const &) = delete;
+
+	constexpr MoveOnly(MoveOnly &&other)
+		: val{ other.val }
+	{
+		other.val = Default;
+	}
+	MoveOnly &operator = (MoveOnly &&other) noexcept
+	{
+		if (val != Default)
+			FDestruct{}(val);
+
+		val = other.val;
+		other.val = Default;
+
+		return *this;
+	}
+
+	operator T() const
+	{
+		return val;
+	}
+
+	T *operator & ()
+	{
+		return &val;
+	}
+
+	T const *operator & () const
+	{
+		return &val;
+	}
+};
+
+struct VertexArray
+{
+	MoveOnly<GLuint, decltype([](GLuint v) { glDeleteVertexArrays(1, &v); })> vertex_array;
+
+	VertexArray()
+	{
+		glGenVertexArrays(1, &vertex_array);
+	}
+
+	void bind()
+	{
+		glBindVertexArray(vertex_array);
+	}
+};
+
+struct Buffer
+{
+	MoveOnly<GLuint, decltype([](GLuint v) { glDeleteBuffers(1, &v); })> buffer;
+	GLenum target = GLenum(-1);
+
+	explicit Buffer(GLenum _target)
+	{
+		glGenBuffers(1, &buffer);
+		target = _target;
+	}
+
+	void bind()
+	{
+		glBindBuffer(target, buffer);
+	}
+};
+
+struct Buffers
+{
+	VertexArray vao{};
+	Buffer vbo{ GL_ARRAY_BUFFER };
+	Buffer ebo{ GL_ELEMENT_ARRAY_BUFFER };
+};
+
+struct Shader
+{
+	MoveOnly<GLuint, decltype([](GLuint v) { glDeleteShader(v); })> shader;
+	GLenum type = GLenum(-1);
+
+	explicit Shader(GLenum _type)
+	{
+		shader = glCreateShader(_type);
+		type = _type;
+	}
+
+	static Shader compile(GLenum _type, char const *source)
+	{
+		Shader result(_type);
+
+		glShaderSource(result.shader, 1, &source, nullptr);
+		glCompileShader(result.shader);
+
+		if (GLint success; glGetShaderiv(result.shader, GL_COMPILE_STATUS, &success), !success)
+		{
+			char buff[1024];
+			glGetShaderInfoLog(result.shader, sizeof(buff), nullptr, buff);
+			throw 1;
+			// std::cout << "glCompileShader vertexShader error: " << buff << "\n";
+		}
+
+		return result;
+	}
+};
+
+struct Program
+{
+	MoveOnly<GLuint, decltype([](GLuint v) { glDeleteProgram(v); })> program;
+
+	Program()
+	{
+		program = glCreateProgram();
+	}
+
+	void use()
+	{
+		glUseProgram(program);
+	}
+
+	GLint find_attribute(char const *name)
+	{
+		return glGetAttribLocation(program, name);
+	}
+
+	GLint find_uniform(char const *name)
+	{
+		return glGetUniformLocation(program, name);
+	}
+
+	static Program link(std::span<const Shader> shaders)
+	{
+		Program result;
+
+		for (auto const &shader : shaders)
+			glAttachShader(result.program, shader.shader);
+
+		glLinkProgram(result.program);
+
+		if (GLint success; glGetProgramiv(result.program, GL_LINK_STATUS, &success), !success)
+		{
+			char buff[1024];
+			glGetProgramInfoLog(result.program, sizeof(buff), nullptr, buff);
+			throw 1;
+			// std::cout << "glLinkProgram error: " << buff << "\n";
+		}
+
+		return result;
+	}
+};
+
+
+} // namespace OpenGL
+
+
+struct OpenGLMaterial : Material
+{
+	OpenGL::Program program;
+
+	std::optional<OpenGL::Buffers> buffers;
+
+	OpenGLMaterial(OpenGL::Program _program, ShaderValuesInfo _attribute_info, ShaderValuesInfo _uniform_info)
+		: program{ std::move(_program) }
+	{
+		attribute_info = std::move(_attribute_info);
+		uniform_info = std::move(_uniform_info);
+		uniforms.resize(uniform_info.fields.size());
+	}
+};
+
+
 class OpenGLGraphics : public Graphics
 {
 private:
 
-	GLuint vertex_array_object;
-	GLuint vertex_buffer_object;
-	GLuint element_buffer_object;
-
-	GLuint shader_program;
+	GLuint multisample_framebuffer;
+	GLuint multisample_texture_color;
+	GLuint multisample_texture_depth;
 
 	GLuint texture;
-
-	GLuint mvp_index;
-	GLuint ourTexture_index;
-
 
 public:
 
@@ -60,131 +268,7 @@ public:
 	{
 		(void)OpenGLStatic::get_singleton();
 
-		glViewport(0, 0, 1000, 1000);
-
-		glGenVertexArrays(1, &vertex_array_object);
-		glBindVertexArray(vertex_array_object);
-
-		glGenBuffers(1, &vertex_buffer_object);
-		glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
-
-		glGenBuffers(1, &element_buffer_object);
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
-
-		char const * const vertex_shader_source = R"tag(
-#version 460 core
-
-in vec3 inPos;
-in vec4 inColor;
-in vec2 inTexCoord;
-in vec2 inTexOffset;
-
-uniform mat4 mvp;
-
-out vec4 varColor;
-out vec2 varTexCoord;
-out vec2 varTexOffset;
-
-void main()
-{
-	gl_Position = mvp * vec4(inPos, 1.0);
-	varColor = inColor;
-	varTexCoord = inTexCoord;
-	varTexOffset = inTexOffset;
-}
-)tag";
-
-		char const * const fragment_shader_source = R"tag(
-#version 460 core
-
-in vec4 varColor;
-in vec2 varTexCoord;
-in vec2 varTexOffset;
-
-out vec4 outFragColor;
-
-uniform sampler2D ourTexture;
-
-void main()
-{
-	outFragColor = texture(ourTexture, varTexOffset + mod(varTexCoord, 1.0)) * varColor;
-}
-)tag";
-
-		GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-		GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-
-		glShaderSource(vertex_shader, 1, &vertex_shader_source, nullptr);
-		glShaderSource(fragment_shader, 1, &fragment_shader_source, nullptr);
-
-		glCompileShader(vertex_shader);
-		glCompileShader(fragment_shader);
-
-		if (GLint success; glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &success), !success)
-		{
-			char buff[1024];
-			glGetShaderInfoLog(vertex_shader, sizeof(buff), nullptr, buff);
-			throw 1;
-			// std::cout << "glCompileShader vertexShader error: " << buff << "\n";
-		}
-
-		if (GLint success; glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &success), !success)
-		{
-			char buff[1024];
-			glGetShaderInfoLog(fragment_shader, sizeof(buff), nullptr, buff);
-			throw 1;
-			// std::cout << "glCompileShader fragmentShader error: " << buff << "\n";
-		}
-
-		shader_program = glCreateProgram();
-
-		glAttachShader(shader_program, vertex_shader);
-		glAttachShader(shader_program, fragment_shader);
-
-		glLinkProgram(shader_program);
-
-		if (GLint success; glGetProgramiv(shader_program, GL_LINK_STATUS, &success), !success)
-		{
-			char buff[1024];
-			glGetProgramInfoLog(shader_program, sizeof(buff), nullptr, buff);
-			throw 1;
-			// std::cout << "glLinkProgram error: " << buff << "\n";
-		}
-
-		glDeleteShader(vertex_shader);
-		glDeleteShader(fragment_shader);
-
-		{
-			GLuint index = glGetAttribLocation(shader_program, "inPos");
-			glVertexAttribPointer(index, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, pos)));
-			glEnableVertexAttribArray(index);
-		}
-
-		{
-			GLuint index = glGetAttribLocation(shader_program, "inColor");
-			glVertexAttribPointer(index, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, color)));
-			//glVertexAttribPointer(index, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, color)));
-			glEnableVertexAttribArray(index);
-		}
-
-		{
-			GLuint index = glGetAttribLocation(shader_program, "inTexCoord");
-			glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_coord)));
-			glEnableVertexAttribArray(index);
-		}
-
-		{
-			GLuint index = glGetAttribLocation(shader_program, "inTexOffset");
-			glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_offset)));
-			glEnableVertexAttribArray(index);
-		}
-
-		mvp_index = glGetUniformLocation(shader_program, "mvp");
-		ourTexture_index = glGetUniformLocation(shader_program, "ourTexture");
-
-		glBindFragDataLocation(shader_program, 0, "outFragColor");
-
-		glUseProgram(shader_program);
+		glViewport(0, 0, WIDTH, HEIGHT);
 
 		glEnable(GL_CULL_FACE);
 		glCullFace(GL_BACK);
@@ -198,92 +282,116 @@ void main()
 
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+
+		glGenFramebuffers(1, &multisample_framebuffer);
+		glBindFramebuffer(GL_FRAMEBUFFER, multisample_framebuffer);
+
+		glGenTextures(1, &multisample_texture_color);
+		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA, WIDTH, HEIGHT, GL_TRUE);
+		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color, 0);
+
+		glGenTextures(1, &multisample_texture_depth);
+		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT, WIDTH, HEIGHT, GL_TRUE);
+		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth, 0);
+
+		glEnable(GL_MULTISAMPLE);
 	}
 
 	~OpenGLGraphics()
 	{
+		glDeleteTextures(1, &multisample_texture_depth);
+		glDeleteTextures(1, &multisample_texture_color);
+		glDeleteFramebuffers(1, &multisample_framebuffer);
+
 		glDeleteTextures(1, &texture);
-		glDeleteProgram(shader_program);
-		glDeleteBuffers(1, &element_buffer_object);
-		glDeleteBuffers(1, &vertex_buffer_object);
-		glDeleteVertexArrays(1, &vertex_array_object);
 	}
 
 	virtual void draw(Frame const &frame) override
 	{
+		glBindFramebuffer(GL_FRAMEBUFFER, multisample_framebuffer);
+
 		GLuint active_vao = (GLuint)-1;
-		std::shared_ptr<Image> active_img;
-
-		if (!frame.data.empty())
-		{
-			active_vao = vertex_array_object;
-			glBindVertexArray(vertex_array_object);
-			glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
-
-			glBufferData(GL_ARRAY_BUFFER, sizeof(frame.data.vertices[0]) * frame.data.vertices.size(), frame.data.vertices.data(), GL_STATIC_DRAW);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(frame.data.indices[0]) * frame.data.indices.size(), frame.data.indices.data(), GL_STATIC_DRAW);
-		}
-
-		glUniformMatrix4fv(mvp_index, 1, GL_FALSE, &glm::identity<glm::mat4>()[0][0]);
+		std::vector<std::shared_ptr<Image>> active_imgs(4);
 
 		for (auto const &task : frame.tasks)
 		{
 			std::visit([&](auto &content) {
 				using T = std::decay_t<decltype(content)>;
 
-				if constexpr (std::is_same_v<T, DrawTaskTypes::DrawIndices>)
+				if constexpr (std::is_same_v<T, DrawTaskTypes::DrawMaterial>)
 				{
-					if (active_vao != vertex_array_object)
+					auto gm = std::static_pointer_cast<OpenGLMaterial>(content.material);
+
+					gm->program.use();
+
+					if (!gm->buffers)
 					{
-						active_vao = vertex_array_object;
-						glBindVertexArray(vertex_array_object);
+						gm->buffers = OpenGL::Buffers{};
+						gm->buffers->vao.bind();
+						gm->buffers->vbo.bind();
+						gm->buffers->ebo.bind();
+
+						for (size_t i = 0, offset = 0; i < gm->attribute_info.fields.size(); ++i)
+						{
+							auto const &f = gm->attribute_info.fields[i];
+							glVertexAttribPointer(i, f.count, type2gltype(f.type), f.normalize, gm->attribute_info.total_byte_size, (void *)offset);
+							glEnableVertexAttribArray(i);
+							offset += f.byte_size();
+						}
+					}
+					else
+					{
+						gm->buffers->vao.bind();
 					}
 
-					if (content.texture != active_img)
+					active_vao = gm->buffers->vao.vertex_array.val;
+
+					glBufferData(GL_ARRAY_BUFFER, content.vertices.size(), content.vertices.data(), GL_STATIC_DRAW);
+					glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(content.indices[0]) * content.indices.size(), content.indices.data(), GL_STATIC_DRAW);
+
+					for (size_t i = 0, img_count = 0; i < gm->uniform_info.fields.size(); ++i)
 					{
-						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, content.texture->width, content.texture->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, content.texture->data.data());
-						// glGenerateMipmap(GL_TEXTURE_2D);
+						auto const &f = gm->uniform_info.fields[i];
 
-						glUniform1i(ourTexture_index, 0);
+						static_assert(ShaderFieldType_version == 1, "Update OpenGLGraphics::draw");
+						switch (f.type)
+						{
+							case ShaderFieldType::Matrix4:
+								glUniformMatrix4fv(i, 1, GL_FALSE, &std::get<mat4>(*content.material->uniforms[i])[0][0]);
+								break;
 
-						active_img = content.texture;
+							case ShaderFieldType::Texture:
+								{
+									if (auto &img = std::get<ShaderFieldTexture_t>(*content.material->uniforms[i]).img; img != active_imgs[img_count])
+									{
+										glActiveTexture(GL_TEXTURE0 + img_count);
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img->width, img->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img->data.data());
+										// glGenerateMipmap(GL_TEXTURE_2D);
+										glUniform1i(i, img_count);
+										active_imgs[img_count] = img;
+									}
+
+									img_count += 1;
+								}
+								break;
+
+							default:
+								throw 1;
+						}
 					}
 
-					glDrawElements(GL_TRIANGLES, content.count, GL_UNSIGNED_INT, reinterpret_cast<void const *>(content.from * sizeof(frame.data.indices[0])));
-				}
-				else
-				if constexpr (std::is_same_v<T, DrawTaskTypes::DrawCached>)
-				{
-					std::shared_ptr<FrameCacheData> cache = std::static_pointer_cast<FrameCacheData>(content.graphics_cache);
-
-					if (active_vao != cache->vertex_array_object)
-					{
-						active_vao = cache->vertex_array_object;
-						glBindVertexArray(cache->vertex_array_object);
-					}
-
-					if (content.texture != active_img)
-					{
-						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, content.texture->width, content.texture->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, content.texture->data.data());
-						// glGenerateMipmap(GL_TEXTURE_2D);
-
-						glUniform1i(ourTexture_index, 0);
-
-						active_img = content.texture;
-					}
-
-					glDrawElements(GL_TRIANGLES, cache->count, GL_UNSIGNED_INT, 0);
-				}
-				else
-				if constexpr (std::is_same_v<T, DrawTaskTypes::UpdateMVP>)
-				{
-					glUniformMatrix4fv(mvp_index, 1, GL_FALSE, &content.mvp[0][0]);
+					// TODO
+					glDrawElements(GL_TRIANGLES, content.indices.size(), GL_UNSIGNED_INT, reinterpret_cast<void const *>(0 * sizeof(content.indices[0])));
 				}
 				else
 				if constexpr (std::is_same_v<T, DrawTaskTypes::ClearBackground>)
 				{
-					glClearColor(content.color.r/255.0f, content.color.g/255.0f, content.color.b/255.0f, content.color.a/255.0f);
+					glClearColor(content.color.r, content.color.g, content.color.b, content.color.a);
 					glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 				}
 				else
@@ -324,101 +432,22 @@ void main()
 				}
 			}, task);
 		}
+
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, multisample_framebuffer);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+		glBlitFramebuffer(0, 0, WIDTH, HEIGHT, 0, 0, WIDTH, HEIGHT, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 	}
 
-	struct FrameCacheData : public FrameCacheGraphicsCache
+	virtual std::shared_ptr<Material> create_material(CreateMaterialParams const &params) override
 	{
-		OpenGLGraphics &graphics;
-
-		GLuint vertex_array_object;
-		GLuint vertex_buffer_object;
-		GLuint element_buffer_object;
-		size_t count = 0;
-
-		FrameCacheData(OpenGLGraphics &_graphics)
-			: graphics{ _graphics }
-		{
-			glGenVertexArrays(1, &vertex_array_object);
-			glBindVertexArray(vertex_array_object);
-
-			glGenBuffers(1, &vertex_buffer_object);
-			glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
-
-			glGenBuffers(1, &element_buffer_object);
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
-
-			{
-				GLuint index = glGetAttribLocation(_graphics.shader_program, "inPos");
-				glVertexAttribPointer(index, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, pos)));
-				glEnableVertexAttribArray(index);
-			}
-
-			{
-				GLuint index = glGetAttribLocation(_graphics.shader_program, "inColor");
-				glVertexAttribPointer(index, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, color)));
-				//glVertexAttribPointer(index, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, color)));
-				glEnableVertexAttribArray(index);
-			}
-
-			{
-				GLuint index = glGetAttribLocation(_graphics.shader_program, "inTexCoord");
-				glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_coord)));
-				glEnableVertexAttribArray(index);
-			}
-
-			{
-				GLuint index = glGetAttribLocation(_graphics.shader_program, "inTexOffset");
-				glVertexAttribPointer(index, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void const *>(offsetof(Vertex, tex_offset)));
-				glEnableVertexAttribArray(index);
-			}
-		}
-
-		~FrameCacheData()
-		{
-			glDeleteBuffers(1, &element_buffer_object);
-			glDeleteBuffers(1, &vertex_buffer_object);
-			glDeleteVertexArrays(1, &vertex_array_object);
-
-			graphics.remove_cache(*this);
-		}
-
-		void upload(FrameCache &cache, bool bind = true)
-		{
-			glBindVertexArray(vertex_array_object);
-			glBufferData(GL_ARRAY_BUFFER, sizeof(cache.vertices[0]) * cache.vertices.size(), cache.vertices.data(), GL_STATIC_DRAW);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cache.indices[0]) * cache.indices.size(), cache.indices.data(), GL_STATIC_DRAW);
-			count = cache.indices.size();
-		}
-	};
-
-	std::vector<std::weak_ptr<FrameCacheData>> cache_data;
-
-	virtual void cache(FrameCache &cache, std::shared_ptr<FrameCacheGraphicsCache> &graphics_cache) override
-	{
-		if (graphics_cache)
-		{
-			std::static_pointer_cast<FrameCacheData>(graphics_cache)->upload(cache);
-		}
-		else
-		{
-			auto data = std::make_shared<FrameCacheData>(*this);
-			data->upload(cache, false);
-			cache_data.push_back(data);
-			graphics_cache = std::move(data);
-		}
-	}
-
-	void remove_cache(FrameCacheData const &data)
-	{
-		const auto func = [&](auto const &ptr) {
-			if (auto sptr = ptr.lock())
-				return &*sptr == &data;
-
-			return false;
-		};
-
-		if (auto it = std::find_if(cache_data.begin(), cache_data.end(), func); it != cache_data.end())
-			cache_data.erase(it);
+		return std::make_shared<OpenGLMaterial>(
+			OpenGL::Program::link(std::initializer_list<OpenGL::Shader>{
+				OpenGL::Shader::compile(GL_VERTEX_SHADER, params.vertex_shader),
+				OpenGL::Shader::compile(GL_FRAGMENT_SHADER, params.fragment_shader),
+			}),
+			params.attributes,
+			params.uniforms
+		);
 	}
 };
 

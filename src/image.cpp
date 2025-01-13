@@ -2,6 +2,7 @@
 
 #include "png.h"
 
+#include <memory>
 #include <string>
 #include <cstdio>
 
