@@ -69,21 +69,29 @@ struct MouseEvent
 	vec2 scroll;
 };
 
+struct MouseExternalUnlockEvent
+{
+};
+
+struct ResizeEvent
+{
+	ivec2 old_size;
+	ivec2 new_size;
+};
+
+struct CloseEvent
+{
+};
+
 class WindowEventHandler
 {
 public:
 
 	virtual ~WindowEventHandler() = default;
 
-	virtual void on_keyboard_event(double time, KeyboardEvent event)
-	{
-	}
-
-	virtual void on_mouse_event(double time, MouseEvent event)
-	{
-	}
-
-	virtual void on_close_event(double time)
-	{
-	}
+	virtual void on_keyboard_event(double time, KeyboardEvent event) = 0;
+	virtual void on_mouse_event(double time, MouseEvent event) = 0;
+	virtual void on_mouse_external_unlock(double time, MouseExternalUnlockEvent event) = 0;
+	virtual void on_resize(double time, ResizeEvent event) = 0;
+	virtual void on_close_event(double time, CloseEvent event) = 0;
 };

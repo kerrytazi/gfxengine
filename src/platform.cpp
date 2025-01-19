@@ -58,7 +58,7 @@ public:
 		NtDelayExecution(false, &interval);
 	}
 
-	virtual void debug_output(char const *c_str, size_t len) override
+	virtual void debug_log(char const *c_str, size_t len) override
 	{
 		OutputDebugStringA(c_str);
 	}

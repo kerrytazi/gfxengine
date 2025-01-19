@@ -10,9 +10,9 @@
 
 struct Image;
 
-static constexpr size_t ShaderFieldType_version = 1;
+static constexpr size_t ShaderFieldType_version = 2;
 
-static_assert(ShaderFieldType_version == 1, "Update ShaderFieldType");
+static_assert(ShaderFieldType_version == 2, "Update ShaderFieldType");
 enum class ShaderFieldType : uint16_t
 {
 	I8, U8,
@@ -22,6 +22,7 @@ enum class ShaderFieldType : uint16_t
 	F32, F64,
 
 	Matrix4,
+	Vec1, Vec2, Vec3, Vec4,
 	Texture,
 };
 
@@ -30,7 +31,7 @@ struct ShaderFieldTexture_t
 	std::shared_ptr<Image> img;
 };
 
-static_assert(ShaderFieldType_version == 1, "Update ShaderFieldValue");
+static_assert(ShaderFieldType_version == 2, "Update ShaderFieldValue");
 using ShaderFieldValue = std::variant<
 	int8_t, uint8_t,
 	int16_t, uint16_t,
@@ -38,6 +39,7 @@ using ShaderFieldValue = std::variant<
 	int64_t, uint64_t,
 	float, double,
 	mat4,
+	vec1, vec2, vec3, vec4,
 	ShaderFieldTexture_t
 >;
 
@@ -55,7 +57,7 @@ struct ShaderFieldInfo
 
 	static constexpr size_t type_size(ShaderFieldType t)
 	{
-		static_assert(ShaderFieldType_version == 1, "Update ShaderFieldInfo::type_size::table");
+		static_assert(ShaderFieldType_version == 2, "Update ShaderFieldInfo::type_size::table");
 		constexpr size_t table[]{
 			1, 1,
 			2, 2,
@@ -63,6 +65,7 @@ struct ShaderFieldInfo
 			8, 8,
 			4, 8,
 			4*16,
+			4, 8, 12, 16,
 			4,
 		};
 

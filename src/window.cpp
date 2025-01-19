@@ -46,7 +46,7 @@ private:
 		{
 			WNDCLASSW wc{};
 			wc.style         = CS_OWNDC;
-			wc.lpfnWndProc   = DefWindowProcW; // &WindowsWindow::static_win_proc;
+			wc.lpfnWndProc   = DefWindowProcW;
 			wc.hInstance     = WindowsWindowStatic::hinstance;
 			wc.hIcon         = LoadIconA(nullptr, IDI_WINLOGO);
 			wc.hCursor       = LoadCursorA(nullptr, IDC_ARROW);
@@ -228,6 +228,11 @@ private:
 	bool closed = false;
 	bool raw_mouse = false;
 	POINT save_mouse_pos{};
+
+	ivec2 viewport_size{};
+
+	bool fullscreen_enabled = false;
+	RECT save_window_rect{};
 
 	std::unique_ptr<Graphics> graphics;
 
@@ -469,6 +474,29 @@ private:
 				break;
 			}
 
+			case WM_SIZE:
+			{
+				double event_time = platform.get_time();
+				ResizeEvent event{};
+				event.old_size = viewport_size;
+				event.new_size = { LOWORD(lparam), HIWORD(lparam) };
+				viewport_size = event.new_size;
+				window_event_handler->on_resize(event_time, event);
+				break;
+			}
+
+			case WM_CAPTURECHANGED:
+			{
+				if (raw_mouse)
+				{
+					lock_mouse(false);
+					double event_time = platform.get_time();
+					MouseExternalUnlockEvent event{};
+					window_event_handler->on_mouse_external_unlock(event_time, event);
+				}
+				break;
+			}
+
 			case WM_SYSCOMMAND:
 			{
 				// block system commands (like opening the context menu with Alt+Space)
@@ -481,7 +509,8 @@ private:
 			case WM_CLOSE:
 			{
 				double event_time = platform.get_time();
-				window_event_handler->on_close_event(event_time);
+				CloseEvent event{};
+				window_event_handler->on_close_event(event_time, event);
 				closed = true;
 				break;
 			}
@@ -577,7 +606,7 @@ public:
 			pfd.iPixelType   = PFD_TYPE_RGBA;
 			pfd.cColorBits   = 32;
 
-			std::int32_t pf = ChoosePixelFormat(hdc, &pfd);
+			int pf = ChoosePixelFormat(hdc, &pfd);
 
 			if (!pf)
 				throw 1;
@@ -591,16 +620,6 @@ public:
 				throw 1;
 				//ThrowSystemError("CWin32Window::DescribePixelFormat(...): ");
 		}
-		//
-		//hglrc = create_gl_context(hdc, 4, 6);
-		//
-		//if (!hglrc)
-		//	throw 1;
-		//	//ThrowSystemError("CWin32Window::wglCreateContext(...): ");
-		//
-		//wglMakeCurrent(hdc, hglrc);
-
-		//graphics = _create_graphics();
 
 		ShowWindow(hwnd, SW_SHOW);
 	}
@@ -704,10 +723,16 @@ public:
 
 			RegisterRawInputDevices(&rid, 1, sizeof(rid));
 
+			SetCapture(hwnd);
+
 			raw_mouse = true;
 		}
 		else
 		{
+			raw_mouse = false;
+
+			ReleaseCapture();
+
 			ClipCursor(nullptr);
 
 #if GFXENGINE_EDITOR
@@ -719,11 +744,28 @@ public:
 
 			RegisterRawInputDevices(&rid, 1, sizeof(rid));
 
-			raw_mouse = false;
-
 			SetCursorPos(save_mouse_pos.x, save_mouse_pos.y);
 
 			ShowCursor(TRUE);
+		}
+	}
+
+	virtual void fullscreen(bool enable) override
+	{
+		if (enable)
+		{
+			fullscreen_enabled = true;
+			GetWindowRect(hwnd, &save_window_rect);
+			SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP);
+			int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+			int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+			SetWindowPos(hwnd, HWND_TOP, 0, 0, screenWidth, screenHeight, SWP_SHOWWINDOW);
+		}
+		else
+		{
+			fullscreen_enabled = false;
+			SetWindowLongW(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+			SetWindowPos(hwnd, HWND_TOP, save_window_rect.left, save_window_rect.top, save_window_rect.right - save_window_rect.left, save_window_rect.bottom - save_window_rect.top, SWP_SHOWWINDOW);
 		}
 	}
 
@@ -786,24 +828,18 @@ public:
 	}
 };
 
-struct WindowEventUnion
+using WindowEventVariant = std::variant<
+	KeyboardEvent,
+	MouseEvent,
+	MouseExternalUnlockEvent,
+	ResizeEvent,
+	CloseEvent
+>;
+
+struct WindowEventWrapper
 {
-	enum class Type
-	{
-		Keyboard,
-		Mouse,
-		Close,
-	};
-
-	union Data
-	{
-		KeyboardEvent keyboard_event;
-		MouseEvent mouse_event;
-	};
-
-	Type type;
-	Data data;
 	double time;
+	WindowEventVariant data;
 };
 
 class WindowEventHandlerThread : public WindowEventHandler
@@ -811,8 +847,8 @@ class WindowEventHandlerThread : public WindowEventHandler
 private:
 
 	std::mutex mtx;
-	std::vector<WindowEventUnion> events;
-	std::vector<WindowEventUnion> events2;
+	std::vector<WindowEventWrapper> events;
+	std::vector<WindowEventWrapper> events2;
 
 public:
 
@@ -825,34 +861,35 @@ public:
 	virtual void on_keyboard_event(double time, KeyboardEvent event) override
 	{
 		std::unique_lock lck(mtx);
-		events.push_back(WindowEventUnion{
-			.type = WindowEventUnion::Type::Keyboard,
-			.data = WindowEventUnion::Data{ .keyboard_event = event },
-			.time = time,
-		});
+		events.push_back(WindowEventWrapper(time, event));
 	}
 
 	virtual void on_mouse_event(double time, MouseEvent event) override
 	{
 		std::unique_lock lck(mtx);
-		events.push_back(WindowEventUnion{
-			.type = WindowEventUnion::Type::Mouse,
-			.data = WindowEventUnion::Data{ .mouse_event = event },
-			.time = time,
-		});
+		events.push_back(WindowEventWrapper(time, event));
 	}
 
-	virtual void on_close_event(double time) override
+	virtual void on_mouse_external_unlock(double time, MouseExternalUnlockEvent event) override
 	{
 		std::unique_lock lck(mtx);
-		events.push_back(WindowEventUnion{
-			.type = WindowEventUnion::Type::Close,
-			.time = time,
-		});
+		events.push_back(WindowEventWrapper(time, event));
+	}
+
+	virtual void on_resize(double time, ResizeEvent event) override
+	{
+		std::unique_lock lck(mtx);
+		events.push_back(WindowEventWrapper(time, event));
+	}
+
+	virtual void on_close_event(double time, CloseEvent event) override
+	{
+		std::unique_lock lck(mtx);
+		events.push_back(WindowEventWrapper(time, event));
 	}
 
 	[[nodiscard]]
-	std::vector<WindowEventUnion> const &get_and_release_events()
+	std::vector<WindowEventWrapper> const &get_and_release_events()
 	{
 		std::unique_lock lck(mtx);
 		events2.clear();
@@ -1010,20 +1047,34 @@ public:
 
 		for (auto const &event : events)
 		{
-			switch (event.type)
-			{
-				case WindowEventUnion::Type::Keyboard:
-					window_event_handler->on_keyboard_event(event.time, event.data.keyboard_event);
-					break;
-				case WindowEventUnion::Type::Mouse:
-					window_event_handler->on_mouse_event(event.time, event.data.mouse_event);
-					break;
-				case WindowEventUnion::Type::Close:
-					window_event_handler->on_close_event(event.time);
-					break;
-				default:
-					throw 1;
-			}
+			std::visit([&](auto &data) {
+				using T = std::decay_t<decltype(data)>;
+
+				if constexpr (std::is_same_v<T, KeyboardEvent>)
+				{
+					window_event_handler->on_keyboard_event(event.time, data);
+				}
+				else
+				if constexpr (std::is_same_v<T, MouseEvent>)
+				{
+					window_event_handler->on_mouse_event(event.time, data);
+				}
+				else
+				if constexpr (std::is_same_v<T, MouseExternalUnlockEvent>)
+				{
+					window_event_handler->on_mouse_external_unlock(event.time, data);
+				}
+				else
+				if constexpr (std::is_same_v<T, ResizeEvent>)
+				{
+					window_event_handler->on_resize(event.time, data);
+				}
+				else
+				if constexpr (std::is_same_v<T, CloseEvent>)
+				{
+					window_event_handler->on_close_event(event.time, data);
+				}
+			}, event.data);
 		}
 	}
 
@@ -1044,6 +1095,12 @@ public:
 		});
 	}
 
+	virtual void fullscreen(bool enable) override
+	{
+		if (_window)
+			_window->fullscreen(enable);
+	}
+
 	virtual void close() override
 	{
 		push_task([](WindowsWindow &window) {
@@ -1055,16 +1112,11 @@ public:
 	{
 		if (_window)
 			_window->set_vsync(enable);
-
-		//push_task([enable](WindowsWindow &window) {
-		//	window.set_vsync(enable);
-		//});
 	}
 };
 
 std::unique_ptr<Window> _create_window(CreateWindowParams const &params)
 {
-	//return std::make_unique<WindowsWindow>(params);
 	return std::make_unique<WindowsWindowThread>(params);
 }
 

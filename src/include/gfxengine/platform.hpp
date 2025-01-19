@@ -21,5 +21,5 @@ public:
 	virtual double get_time() const = 0;
 	virtual void sleep(double seconds) = 0;
 
-	virtual void debug_output(char const *c_str, size_t len) = 0;
+	virtual void debug_log(char const *c_str, size_t len) = 0;
 };

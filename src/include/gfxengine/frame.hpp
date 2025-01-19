@@ -14,9 +14,39 @@
 #include <memory>
 #include <variant>
 
-struct FrameCacheGraphicsCache
+struct FrameCacheVertices
 {
-	virtual ~FrameCacheGraphicsCache() = default;
+	std::vector<uint8_t> vertices;
+	std::vector<uint32_t> indices;
+
+	[[nodiscard]]
+	bool empty() const
+	{
+		return vertices.empty();
+	}
+
+	void clear()
+	{
+		vertices.clear();
+		indices.clear();
+	}
+
+	void hard_clear()
+	{
+		vertices = {};
+		indices = {};
+	}
+
+	void add_vertices(std::shared_ptr<Material> const &material, std::span<const uint8_t> vertices, std::span<const uint32_t> indices);
+};
+
+struct GraphicsCacheVertices
+{
+	virtual ~GraphicsCacheVertices() = default;
+	virtual void load(FrameCacheVertices const &c) = 0;
+
+	const size_t stats_vertices_count = 0;
+	const size_t stats_indices_count = 0;
 };
 
 struct DrawTaskTypes
@@ -26,6 +56,11 @@ struct DrawTaskTypes
 		std::shared_ptr<Material> material;
 		std::vector<uint8_t> vertices;
 		std::vector<uint32_t> indices;
+	};
+
+	struct DrawCached
+	{
+		std::shared_ptr<GraphicsCacheVertices> cache;
 	};
 
 	struct ClearBackground
@@ -56,6 +91,7 @@ struct DrawTaskTypes
 
 using DrawTask = std::variant<
 	DrawTaskTypes::DrawMaterial,
+	DrawTaskTypes::DrawCached,
 	DrawTaskTypes::ClearBackground,
 	DrawTaskTypes::SettingWireFrame,
 	DrawTaskTypes::SettingCulling,
@@ -64,7 +100,6 @@ using DrawTask = std::variant<
 
 struct FrameStats
 {
-	size_t api_calls;
 	size_t draw_calls;
 	size_t vertices;
 	size_t indices;
@@ -76,20 +111,28 @@ class Frame
 {
 public:
 
+	std::vector<FrameCacheVertices *> caches;
 	std::vector<DrawTask> tasks;
 
 #if GFXENGINE_EDITOR
 	std::function<void()> draw_editor{};
 #endif // GFXENGINE_EDITOR
 
-	void add_vertices(std::shared_ptr<Material> const &material, std::span<const uint8_t> vertices, std::span<const uint32_t> indices);
+	void add_vertices(std::shared_ptr<Material> const &material, std::span<const uint8_t> _vertices, std::span<const uint32_t> _indices);
 
 public:
 
-	template <typename TVertex> requires(std::is_trivially_destructible_v<TVertex>)
-	void add_vertices(std::shared_ptr<Material> const &material, std::span<const TVertex> vertices, std::span<const uint32_t> indices)
+	void add_cached_vertices(std::shared_ptr<Material> const &material, FrameCacheVertices const &c);
+
+	void add_cached_vertices(std::shared_ptr<GraphicsCacheVertices> c)
 	{
-		add_vertices(material, std::span<const uint8_t>((uint8_t const *)&*vertices.begin(), (uint8_t const *)&*vertices.end()), indices);
+		tasks.push_back(DrawTask(DrawTaskTypes::DrawCached{ .cache = c }));
+	}
+
+	template <typename TVertex> requires(std::is_trivially_destructible_v<TVertex>)
+	void add_vertices(std::shared_ptr<Material> const &material, std::span<const TVertex> _vertices, std::span<const uint32_t> _indices)
+	{
+		add_vertices(material, std::span<const uint8_t>((uint8_t const *)&*_vertices.begin(), (uint8_t const *)&*_vertices.end()), _indices);
 	}
 
 	template <typename TVertex> requires(std::is_trivially_destructible_v<TVertex>)
@@ -141,6 +184,14 @@ public:
 #if GFXENGINE_EDITOR
 		draw_editor = {};
 #endif // GFXENGINE_EDITOR
+	}
+
+	template <typename TFunc> requires(std::is_invocable_v<TFunc>)
+	void cache(FrameCacheVertices &c, TFunc const &func)
+	{
+		caches.push_back(&c);
+		func();
+		caches.pop_back();
 	}
 
 	FrameStats get_stats() const;

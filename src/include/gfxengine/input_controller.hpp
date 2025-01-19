@@ -21,8 +21,8 @@ public:
 		Right,       // +x (east)
 		Down,        // -y
 		Up,          // +y
-		Forward,     // -z (north)
-		Back,        // +z (south)
+		Back,        // -z (north)
+		Front,       // +z (south)
 	};
 
 	static inline const size_t DIRECTION_MAX = 6;
@@ -33,8 +33,18 @@ public:
 		Direction::Right,
 		Direction::Down,
 		Direction::Up,
-		Direction::Forward,
 		Direction::Back,
+		Direction::Front,
+	};
+
+	static inline uint32_t DirectionBitMask[DIRECTION_MAX]
+	{
+		0b001,
+		0b001,
+		0b010,
+		0b010,
+		0b100,
+		0b100,
 	};
 
 	InputController(InputControllerOptions _options = {})
@@ -44,9 +54,25 @@ public:
 
 	void update_all(double time)
 	{
+		vec3 delta_pos{};
+		uint32_t flags = 0;
+
 		for (Direction direction : DirectionList)
+		{
 			if (double last_time = last_times[(int)direction]; last_time != 0.0 && last_time != time)
-				process_move(time, direction);
+			{
+				flags ^= DirectionBitMask[(int)direction];
+				process_move(delta_pos, time, direction);
+			}
+		}
+
+		int active_directions = std::popcount(flags);
+
+		if (active_directions > 0)
+		{
+			float mult = 1.0f / math::sqrt((float)active_directions);
+			position += delta_pos * mult;
+		}
 	}
 
 	void stop_all(double time)
@@ -115,9 +141,9 @@ public:
 
 private:
 
-	void process_move(double time, Direction direction)
+	void process_move(vec3 &delta_pos, double time, Direction direction)
 	{
-		position += directions[(int)direction] * speed * (time - last_times[(int)direction]);
+		delta_pos += directions[(int)direction] * speed * (time - last_times[(int)direction]);
 		last_times[(int)direction] = time;
 	}
 
@@ -126,15 +152,15 @@ private:
 		vec3 direction = calc_front_direction();
 
 		vec3 front = vec3{ direction.x, 0.0f, direction.z }.normalize();
-		vec3 up = vec3{ 0.0f, 1.0f, 0.0f };
+		vec3 up = vec3::unit_y();
 		vec3 right = front.cross(up).normalize();
 
-		directions[(int)Direction::Forward] = front;
-		directions[(int)Direction::Back] = -front;
 		directions[(int)Direction::Left] = -right;
 		directions[(int)Direction::Right] = right;
-		directions[(int)Direction::Up] = up;
 		directions[(int)Direction::Down] = -up;
+		directions[(int)Direction::Up] = up;
+		directions[(int)Direction::Back] = -front;
+		directions[(int)Direction::Front] = front;
 	}
 
 	vec3 directions[DIRECTION_MAX]{};

@@ -17,7 +17,6 @@ set(PROJECT_SOURCES
 	cmake/imgui.cmake
 
 	src/include/gfxengine/buffered_cstr.hpp
-	src/include/gfxengine/base_application.hpp
 	src/include/gfxengine/file.hpp
 	src/include/gfxengine/frame.hpp
 	src/include/gfxengine/graphics.hpp
@@ -33,7 +32,6 @@ set(PROJECT_SOURCES
 	src/private/my_windows.hpp
 	src/private/wglext.h
 
-	src/base_application.cpp
 	src/file.cpp
 	src/frame.cpp
 	src/graphics.cpp

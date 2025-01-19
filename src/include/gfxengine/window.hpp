@@ -22,6 +22,7 @@ public:
 	virtual Graphics &get_graphics() const = 0;
 
 	virtual void lock_mouse(bool lock) = 0;
+	virtual void fullscreen(bool enable) = 0;
 	virtual void close() = 0;
 	virtual void set_vsync(bool enable) = 0;
 };

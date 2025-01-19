@@ -789,7 +789,7 @@ struct vec1_base
 	constexpr vec1_base &operator *= (vec1_base other)       { x *= other.x; return *this; }
 	constexpr vec1_base  operator *  (vec1_base other) const { return vec1_base(*this) *= other; }
 
-	constexpr vec1_base &operator /= (T val)                 { return *this *= 1 / val; }
+	constexpr vec1_base &operator /= (T val)                 { x /= val; return *this; }
 	constexpr vec1_base  operator /  (T val) const           { return vec1_base(*this) /= val; }
 	constexpr vec1_base &operator /= (vec1_base other)       { x /= other.x; return *this; }
 	constexpr vec1_base  operator /  (vec1_base other) const { return vec1_base(*this) /= other; }
@@ -919,7 +919,7 @@ struct vec2_base
 	constexpr vec2_base &operator *= (vec2_base other)       { x *= other.x; y *= other.y; return *this; }
 	constexpr vec2_base  operator *  (vec2_base other) const { return vec2_base(*this) *= other; }
 
-	constexpr vec2_base &operator /= (T val)        { return *this *= 1 / val; }
+	constexpr vec2_base &operator /= (T val)        { x /= val; y /= val; return *this; }
 	constexpr vec2_base  operator /  (T val) const  { return vec2_base(*this) /= val; }
 	constexpr vec2_base &operator /= (vec2_base other)       { x /= other.x; y /= other.y; return *this; }
 	constexpr vec2_base  operator /  (vec2_base other) const { return vec2_base(*this) /= other; }
@@ -1166,7 +1166,7 @@ struct vec3_base
 	constexpr vec3_base &operator *= (vec3_base other)       { x *= other.x; y *= other.y; z *= other.z; return *this; }
 	constexpr vec3_base  operator *  (vec3_base other) const { return vec3_base(*this) *= other; }
 
-	constexpr vec3_base &operator /= (T val)        { return *this *= 1 / val; }
+	constexpr vec3_base &operator /= (T val)        { x /= val; y /= val; z /= val; return *this; }
 	constexpr vec3_base  operator /  (T val) const  { return vec3_base(*this) /= val; }
 	constexpr vec3_base &operator /= (vec3_base other)       { x /= other.x; y /= other.y; z /= other.z; return *this; }
 	constexpr vec3_base  operator /  (vec3_base other) const { return vec3_base(*this) /= other; }
@@ -1685,7 +1685,7 @@ struct vec4_base
 	constexpr vec4_base &operator *= (vec4_base other)       { x *= other.x; y *= other.y; z *= other.z; w *= other.w; return *this; }
 	constexpr vec4_base  operator *  (vec4_base other) const { return vec4_base(*this) *= other; }
 
-	constexpr vec4_base &operator /= (T val)        { return *this *= 1 / val; }
+	constexpr vec4_base &operator /= (T val)        { x /= val; y /= val; z /= val; w /= val; return *this; }
 	constexpr vec4_base  operator /  (T val) const  { return vec4_base(*this) /= val; }
 	constexpr vec4_base &operator /= (vec4_base other)       { x /= other.x; y /= other.y; z /= other.z; w /= other.w; return *this; }
 	constexpr vec4_base  operator /  (vec4_base other) const { return vec4_base(*this) /= other; }
@@ -2098,6 +2098,12 @@ template <typename VT> requires(is_vector<VT>)
 constexpr VT floor(const VT val)
 {
 	return _comp(val, floor<VT::template value_type>);
+}
+
+template <typename VT> requires(is_vector<VT>)
+constexpr VT abs(const VT val)
+{
+	return _comp(val, abs<VT::template value_type>);
 }
 
 } // namespace math

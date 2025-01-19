@@ -1,13 +1,12 @@
-#include "gfxengine/base_application.hpp"
 #include "gfxengine/platform.hpp"
 
 extern std::unique_ptr<Platform> _create_platform();
+extern void run_app(Platform &platform);
 
 void startup()
 {
 	auto platform = _create_platform();
-	auto app = create_application(*platform);
-	app->start();
+	run_app(*platform);
 }
 
 int WinMain()

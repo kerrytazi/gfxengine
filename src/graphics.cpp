@@ -9,7 +9,7 @@
 
 static constexpr GLenum type2gltype(ShaderFieldType t)
 {
-	static_assert(ShaderFieldType_version == 1, "Update type2gltype::table");
+	static_assert(ShaderFieldType_version == 2, "Update type2gltype::table");
 	constexpr GLenum table[]{
 		GL_BYTE, GL_UNSIGNED_BYTE,
 		GL_SHORT, GL_UNSIGNED_SHORT,
@@ -17,14 +17,12 @@ static constexpr GLenum type2gltype(ShaderFieldType t)
 		0, 0, // I64 U64
 		GL_FLOAT, GL_DOUBLE,
 		0, // Matrix4
+		0, 0, 0, 0, // vec
 		0, // Texture
 	};
 
 	return table[size_t(t)];
 }
-
-const int WIDTH = 1000;
-const int HEIGHT = 1000;
 
 class OpenGLStatic
 {
@@ -38,6 +36,10 @@ private:
 			throw 1;
 			// std::cout << "Failed to initialize OpenGL context\n";
 		}
+
+		// During init, enable debug output
+		glEnable(GL_DEBUG_OUTPUT);
+		glDebugMessageCallback(&debug_handler, 0);
 	}
 
 	~OpenGLStatic()
@@ -48,6 +50,16 @@ private:
 	OpenGLStatic &operator = (OpenGLStatic const &) = delete;
 	OpenGLStatic(OpenGLStatic &&) = delete;
 	OpenGLStatic &operator = (OpenGLStatic &&) = delete;
+
+	static void debug_handler(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *user_param)
+	{
+		if (type == GL_DEBUG_TYPE_OTHER)
+			return;
+
+		char buf[1024];
+		_snprintf_s(buf, sizeof(buf), "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n", (type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : ""), type, severity, message);
+		throw 1;
+	}
 
 public:
 
@@ -235,7 +247,6 @@ struct Program
 
 } // namespace OpenGL
 
-
 struct OpenGLMaterial : Material
 {
 	OpenGL::Program program;
@@ -249,8 +260,119 @@ struct OpenGLMaterial : Material
 		uniform_info = std::move(_uniform_info);
 		uniforms.resize(uniform_info.fields.size());
 	}
+
+	void bind_vertex_info()
+	{
+		program.use();
+
+		for (size_t i = 0, offset = 0; i < attribute_info.fields.size(); ++i)
+		{
+			auto const &f = attribute_info.fields[i];
+
+			GLint gl_index = glGetAttribLocation(program.program.val, attribute_info.fields[i].name.c_str());
+			glVertexAttribPointer(gl_index, f.count, type2gltype(f.type), f.normalize, attribute_info.total_byte_size, (void *)offset);
+			glEnableVertexAttribArray(gl_index);
+			offset += f.byte_size();
+		}
+	}
+
+	void update_uniforms(std::vector<std::shared_ptr<Image>> &active_textures)
+	{
+		program.use();
+
+		for (size_t i = 0, img_count = 0; i < uniform_info.fields.size(); ++i)
+		{
+			auto const &f = uniform_info.fields[i];
+
+			GLint gl_index = glGetUniformLocation(program.program.val, uniform_info.fields[i].name.c_str());
+
+			static_assert(ShaderFieldType_version == 2, "Update OpenGLGraphics::draw");
+			switch (f.type)
+			{
+				case ShaderFieldType::Matrix4:
+					glUniformMatrix4fv(gl_index, 1, GL_FALSE, &std::get<mat4>(*uniforms[i])[0][0]);
+					break;
+
+				case ShaderFieldType::Vec1:
+					glUniform1fv(gl_index, 1, &std::get<vec1>(*uniforms[i])[0]);
+					break;
+
+				case ShaderFieldType::Vec2:
+					glUniform2fv(gl_index, 1, &std::get<vec2>(*uniforms[i])[0]);
+					break;
+
+				case ShaderFieldType::Vec3:
+					glUniform3fv(gl_index, 1, &std::get<vec3>(*uniforms[i])[0]);
+					break;
+
+				case ShaderFieldType::Vec4:
+					glUniform4fv(gl_index, 1, &std::get<vec4>(*uniforms[i])[0]);
+					break;
+
+				case ShaderFieldType::Texture:
+					{
+						if (auto &img = std::get<ShaderFieldTexture_t>(*uniforms[i]).img; img != active_textures[img_count])
+						{
+							glActiveTexture(GL_TEXTURE0 + img_count);
+							glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img->width, img->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img->data.data());
+							glGenerateMipmap(GL_TEXTURE_2D);
+							glUniform1i(gl_index, img_count);
+							active_textures[img_count] = img;
+						}
+
+						img_count += 1;
+					}
+					break;
+
+				default:
+					throw 1;
+			}
+		}
+	}
 };
 
+static void load_buffer_data(std::shared_ptr<OpenGLMaterial> &material, std::optional<OpenGL::Buffers> &buffers, std::span<const uint8_t> vertices, std::span<const uint32_t> indices);
+
+struct OpenGLGraphicsCacheVertices : GraphicsCacheVertices
+{
+	std::shared_ptr<OpenGLMaterial> material;
+	std::optional<OpenGL::Buffers> buffers;
+	size_t indices_count = 0;
+
+	OpenGLGraphicsCacheVertices(std::shared_ptr<Material> _material)
+		: material{ std::static_pointer_cast<OpenGLMaterial>(_material) }
+	{
+	}
+
+	virtual void load(FrameCacheVertices const &c) override
+	{
+		load_buffer_data(material, buffers, c.vertices, c.indices);
+		indices_count = c.indices.size();
+
+		*const_cast<size_t *>(&stats_vertices_count) = c.vertices.size() / material->attribute_info.total_byte_size;
+		*const_cast<size_t *>(&stats_indices_count) = c.indices.size();
+	}
+};
+
+static void load_buffer_data(std::shared_ptr<OpenGLMaterial> &material, std::optional<OpenGL::Buffers> &buffers, std::span<const uint8_t> vertices, std::span<const uint32_t> indices)
+{
+	if (!buffers)
+	{
+		buffers = OpenGL::Buffers{};
+		buffers->vao.bind();
+		buffers->vbo.bind();
+		buffers->ebo.bind();
+
+		material->bind_vertex_info();
+	}
+	else
+	{
+		buffers->vao.bind();
+	}
+
+	glBufferData(GL_ARRAY_BUFFER, vertices.size(), vertices.data(), GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices[0]) * indices.size(), indices.data(), GL_STATIC_DRAW);
+}
 
 class OpenGLGraphics : public Graphics
 {
@@ -262,13 +384,16 @@ private:
 
 	GLuint texture;
 
+	ivec2 viweport_size{};
+	ivec2 framebuffer_size{};
+
 public:
 
 	OpenGLGraphics()
 	{
 		(void)OpenGLStatic::get_singleton();
 
-		glViewport(0, 0, WIDTH, HEIGHT);
+		glViewport(0, 0, 1, 1);
 
 		glEnable(GL_CULL_FACE);
 		glCullFace(GL_BACK);
@@ -280,7 +405,8 @@ public:
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture);
 
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+		//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
 
@@ -289,17 +415,15 @@ public:
 
 		glGenTextures(1, &multisample_texture_color);
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color);
-		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA, WIDTH, HEIGHT, GL_TRUE);
-		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA, 1, 1, GL_TRUE);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color, 0);
 
 		glGenTextures(1, &multisample_texture_depth);
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth);
-		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT, WIDTH, HEIGHT, GL_TRUE);
-		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT, 1, 1, GL_TRUE);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth, 0);
 
-		glEnable(GL_MULTISAMPLE);
+		//glEnable(GL_MULTISAMPLE);
 	}
 
 	~OpenGLGraphics()
@@ -315,8 +439,7 @@ public:
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, multisample_framebuffer);
 
-		GLuint active_vao = (GLuint)-1;
-		std::vector<std::shared_ptr<Image>> active_imgs(4);
+		std::vector<std::shared_ptr<Image>> active_textures(4);
 
 		for (auto const &task : frame.tasks)
 		{
@@ -327,66 +450,19 @@ public:
 				{
 					auto gm = std::static_pointer_cast<OpenGLMaterial>(content.material);
 
-					gm->program.use();
+					load_buffer_data(gm, gm->buffers, content.vertices, content.indices);
+					gm->update_uniforms(active_textures);
 
-					if (!gm->buffers)
-					{
-						gm->buffers = OpenGL::Buffers{};
-						gm->buffers->vao.bind();
-						gm->buffers->vbo.bind();
-						gm->buffers->ebo.bind();
+					glDrawElements(GL_TRIANGLES, content.indices.size(), GL_UNSIGNED_INT, 0);
+				}
+				else
+				if constexpr (std::is_same_v<T, DrawTaskTypes::DrawCached>)
+				{
+					auto gcache = std::static_pointer_cast<OpenGLGraphicsCacheVertices>(content.cache);
+					gcache->buffers->vao.bind();
+					gcache->material->update_uniforms(active_textures);
 
-						for (size_t i = 0, offset = 0; i < gm->attribute_info.fields.size(); ++i)
-						{
-							auto const &f = gm->attribute_info.fields[i];
-							glVertexAttribPointer(i, f.count, type2gltype(f.type), f.normalize, gm->attribute_info.total_byte_size, (void *)offset);
-							glEnableVertexAttribArray(i);
-							offset += f.byte_size();
-						}
-					}
-					else
-					{
-						gm->buffers->vao.bind();
-					}
-
-					active_vao = gm->buffers->vao.vertex_array.val;
-
-					glBufferData(GL_ARRAY_BUFFER, content.vertices.size(), content.vertices.data(), GL_STATIC_DRAW);
-					glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(content.indices[0]) * content.indices.size(), content.indices.data(), GL_STATIC_DRAW);
-
-					for (size_t i = 0, img_count = 0; i < gm->uniform_info.fields.size(); ++i)
-					{
-						auto const &f = gm->uniform_info.fields[i];
-
-						static_assert(ShaderFieldType_version == 1, "Update OpenGLGraphics::draw");
-						switch (f.type)
-						{
-							case ShaderFieldType::Matrix4:
-								glUniformMatrix4fv(i, 1, GL_FALSE, &std::get<mat4>(*content.material->uniforms[i])[0][0]);
-								break;
-
-							case ShaderFieldType::Texture:
-								{
-									if (auto &img = std::get<ShaderFieldTexture_t>(*content.material->uniforms[i]).img; img != active_imgs[img_count])
-									{
-										glActiveTexture(GL_TEXTURE0 + img_count);
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img->width, img->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img->data.data());
-										// glGenerateMipmap(GL_TEXTURE_2D);
-										glUniform1i(i, img_count);
-										active_imgs[img_count] = img;
-									}
-
-									img_count += 1;
-								}
-								break;
-
-							default:
-								throw 1;
-						}
-					}
-
-					// TODO
-					glDrawElements(GL_TRIANGLES, content.indices.size(), GL_UNSIGNED_INT, reinterpret_cast<void const *>(0 * sizeof(content.indices[0])));
+					glDrawElements(GL_TRIANGLES, gcache->indices_count, GL_UNSIGNED_INT, 0);
 				}
 				else
 				if constexpr (std::is_same_v<T, DrawTaskTypes::ClearBackground>)
@@ -435,7 +511,7 @@ public:
 
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, multisample_framebuffer);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-		glBlitFramebuffer(0, 0, WIDTH, HEIGHT, 0, 0, WIDTH, HEIGHT, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		glBlitFramebuffer(0, 0, framebuffer_size.x, framebuffer_size.y, 0, 0, viweport_size.x, viweport_size.y, GL_COLOR_BUFFER_BIT, GL_SCALED_RESOLVE_FASTEST_EXT);
 	}
 
 	virtual std::shared_ptr<Material> create_material(CreateMaterialParams const &params) override
@@ -448,6 +524,34 @@ public:
 			params.attributes,
 			params.uniforms
 		);
+	}
+
+	virtual std::shared_ptr<GraphicsCacheVertices> create_cache_vertices(std::shared_ptr<Material> material)
+	{
+		return std::make_shared<OpenGLGraphicsCacheVertices>(std::move(material));
+	}
+
+	virtual void resize(ivec2 size, float resolution_scale) override
+	{
+		viweport_size = size;
+		framebuffer_size = ivec2(vec2(size) * resolution_scale) / 2 * 2;
+
+		glViewport(0, 0, framebuffer_size.x, framebuffer_size.y);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, multisample_framebuffer);
+
+		glDeleteTextures(1, &multisample_texture_color);
+		glDeleteTextures(1, &multisample_texture_depth);
+
+		glGenTextures(1, &multisample_texture_color);
+		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA, framebuffer_size.x, framebuffer_size.y, GL_TRUE);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color, 0);
+
+		glGenTextures(1, &multisample_texture_depth);
+		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT, framebuffer_size.x, framebuffer_size.y, GL_TRUE);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth, 0);
 	}
 };
 
