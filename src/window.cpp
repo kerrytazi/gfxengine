@@ -233,6 +233,7 @@ private:
 
 	bool fullscreen_enabled = false;
 	RECT save_window_rect{};
+	WINDOWPLACEMENT save_window_placement{ sizeof(WINDOWPLACEMENT) };
 
 	std::unique_ptr<Graphics> graphics;
 
@@ -752,20 +753,30 @@ public:
 
 	virtual void fullscreen(bool enable) override
 	{
+		fullscreen_enabled = enable;
+		DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
+
 		if (enable)
 		{
-			fullscreen_enabled = true;
-			GetWindowRect(hwnd, &save_window_rect);
-			SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP);
-			int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-			int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-			SetWindowPos(hwnd, HWND_TOP, 0, 0, screenWidth, screenHeight, SWP_SHOWWINDOW);
+			MONITORINFO mi{ sizeof(mi) };
+
+			if (GetWindowPlacement(hwnd, &save_window_placement) && GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi))
+			{
+				SetWindowLongW(hwnd, GWL_STYLE, dwStyle & ~WS_OVERLAPPEDWINDOW);
+				SetWindowPos(hwnd, HWND_TOP,
+							mi.rcMonitor.left, mi.rcMonitor.top,
+							mi.rcMonitor.right - mi.rcMonitor.left,
+							mi.rcMonitor.bottom - mi.rcMonitor.top,
+							SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+			}
 		}
 		else
 		{
-			fullscreen_enabled = false;
-			SetWindowLongW(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
-			SetWindowPos(hwnd, HWND_TOP, save_window_rect.left, save_window_rect.top, save_window_rect.right - save_window_rect.left, save_window_rect.bottom - save_window_rect.top, SWP_SHOWWINDOW);
+			SetWindowLongW(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
+			SetWindowPlacement(hwnd, &save_window_placement);
+			SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+							SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+							SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
 		}
 	}
 

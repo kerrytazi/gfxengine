@@ -384,8 +384,10 @@ private:
 
 	GLuint texture;
 
-	ivec2 viweport_size{};
-	ivec2 framebuffer_size{};
+	ivec2 back_framebuffer_size{};
+	ivec2 multisample_framebuffer_size{};
+
+	std::shared_ptr<OpenGLMaterial> post_copy_material;
 
 public:
 
@@ -423,7 +425,9 @@ public:
 		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT, 1, 1, GL_TRUE);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth, 0);
 
-		//glEnable(GL_MULTISAMPLE);
+		glEnable(GL_MULTISAMPLE);
+
+		init_post_copy();
 	}
 
 	~OpenGLGraphics()
@@ -435,8 +439,91 @@ public:
 		glDeleteTextures(1, &texture);
 	}
 
+	void init_post_copy()
+	{
+		auto params = CreateMaterialParams{};
+
+		params.attributes.add(ShaderFieldInfo{ "pos", ShaderFieldType::F32, false, 2 });
+		params.attributes.add(ShaderFieldInfo{ "tex_coord", ShaderFieldType::F32, false, 2 });
+
+		params.uniforms.add(ShaderFieldInfo{ "tex", ShaderFieldType::Texture, false, 1 });
+
+		params.vertex_shader = R"tag(
+#version 460 core
+
+in vec2 pos;
+in vec2 tex_coord;
+
+out vec2 v_tex_coord;
+
+void main()
+{
+gl_Position = vec4(pos, 0.0, 1.0);
+v_tex_coord = tex_coord;
+}
+)tag";
+
+		params.fragment_shader = R"tag(
+#version 460 core
+
+in vec2 v_tex_coord;
+
+uniform sampler2DMS tex;
+uniform vec2 tex_size;
+
+out vec4 o_frag_color;
+
+void main()
+{
+o_frag_color = texelFetch(tex, ivec2(v_tex_coord * tex_size), 3);
+}
+)tag";
+		auto material = create_material(params);
+
+		{
+			struct TmpVertex
+			{
+				vec2 pos;
+				vec2 tex_coord;
+			};
+
+			std::vector<TmpVertex> _vertices{
+				{ { -1, -1 }, { 0, 0 } },
+				{ {  1, -1 }, { 1, 0 } },
+				{ {  1,  1 }, { 1, 1 } },
+				{ { -1,  1 }, { 0, 1 } },
+			};
+			std::vector<uint32_t> _indices{ 0, 1, 2, 0, 2, 3, };
+
+			std::span<const uint8_t> vertices{ (uint8_t *)&*_vertices.begin(), (uint8_t *)&*_vertices.end() };
+			std::span<const uint32_t> indices{ _indices };
+
+			post_copy_material = std::static_pointer_cast<OpenGLMaterial>(material);
+
+			load_buffer_data(post_copy_material, post_copy_material->buffers, vertices, indices);
+		}
+	}
+
+	void post_copy()
+	{
+		glViewport(0, 0, back_framebuffer_size.x, back_framebuffer_size.y);
+		post_copy_material->program.use();
+		post_copy_material->buffers->vao.bind();
+		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color);
+		glUniform1i(0, 0);
+
+		glUniform2fv(1, 1, &vec2(multisample_framebuffer_size)[0]);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		glDisable(GL_DEPTH_TEST);
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+		glEnable(GL_DEPTH_TEST);
+	}
+
 	virtual void draw(Frame const &frame) override
 	{
+		glViewport(0, 0, multisample_framebuffer_size.x, multisample_framebuffer_size.y);
 		glBindFramebuffer(GL_FRAMEBUFFER, multisample_framebuffer);
 
 		std::vector<std::shared_ptr<Image>> active_textures(4);
@@ -509,9 +596,17 @@ public:
 			}, task);
 		}
 
+#if 1
+		post_copy();
+#else
+		// TODO: Causes flickering on resize
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, multisample_framebuffer);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-		glBlitFramebuffer(0, 0, framebuffer_size.x, framebuffer_size.y, 0, 0, viweport_size.x, viweport_size.y, GL_COLOR_BUFFER_BIT, GL_SCALED_RESOLVE_FASTEST_EXT);
+		glBlitFramebuffer(
+			0, 0, multisample_framebuffer_size.x, multisample_framebuffer_size.y,
+			0, 0, back_framebuffer_size.x, back_framebuffer_size.y,
+			GL_COLOR_BUFFER_BIT, GL_SCALED_RESOLVE_FASTEST_EXT);
+#endif // 0
 	}
 
 	virtual std::shared_ptr<Material> create_material(CreateMaterialParams const &params) override
@@ -533,10 +628,8 @@ public:
 
 	virtual void resize(ivec2 size, float resolution_scale) override
 	{
-		viweport_size = size;
-		framebuffer_size = ivec2(vec2(size) * resolution_scale) / 2 * 2;
-
-		glViewport(0, 0, framebuffer_size.x, framebuffer_size.y);
+		back_framebuffer_size = size;
+		multisample_framebuffer_size = ivec2(vec2(size) * resolution_scale) / 2 * 2;
 
 		glBindFramebuffer(GL_FRAMEBUFFER, multisample_framebuffer);
 
@@ -545,12 +638,12 @@ public:
 
 		glGenTextures(1, &multisample_texture_color);
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color);
-		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA, framebuffer_size.x, framebuffer_size.y, GL_TRUE);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA, multisample_framebuffer_size.x, multisample_framebuffer_size.y, GL_TRUE);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_color, 0);
 
 		glGenTextures(1, &multisample_texture_depth);
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth);
-		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT, framebuffer_size.x, framebuffer_size.y, GL_TRUE);
+		glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_DEPTH_COMPONENT, multisample_framebuffer_size.x, multisample_framebuffer_size.y, GL_TRUE);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D_MULTISAMPLE, multisample_texture_depth, 0);
 	}
 };
